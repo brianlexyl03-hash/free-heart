@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: free-heart
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: CORE_BIND
+        value: 127.0.0.1:7070
+      - key: LOG_LEVEL
+        value: info
