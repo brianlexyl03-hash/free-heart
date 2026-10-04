@@ -29,11 +29,19 @@ const Health = z.object({ ok: z.boolean(), core: z.string() });
 
 const BASE = process.env.CORE_URL || 'http://127.0.0.1:7070';
 async function call(path, opts = {}) {
-  let r;
-  try { r = await fetch(BASE + path, { ...opts, signal: AbortSignal.timeout(20000) }); }
-  catch { throw new CoreUnavailable('Media core is unreachable'); }
-  if (!r.ok) throw new CoreBadResponse(`Media core error ${r.status}`);
-  return r.json().catch(() => { throw new CoreBadResponse(); });
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let r;
+    try {
+      r = await fetch(BASE + path, { ...opts, signal: AbortSignal.timeout(30000) });
+    } catch {
+      lastError = new CoreUnavailable('Media core is unreachable');
+    }
+    if (r?.ok) return r.json().catch(() => { throw new CoreBadResponse(); });
+    if (r) lastError = new CoreBadResponse(`Media core error ${r.status}`);
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+  }
+  throw lastError || new CoreBadResponse();
 }
 const parse = (schema, v) => { const p = schema.safeParse(v); if (!p.success) throw new CoreBadResponse(); return p.data; };
 
