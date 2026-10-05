@@ -20,14 +20,22 @@ const Title = Item.extend({
   overview: z.string().nullish(),
   episodes: z.array(z.object({ key: z.string(), label: z.string() })).optional(),
 });
+const Sub = z.object({ lang: z.string().default(''), label: z.string().default(''), url: z.string().min(1) });
 const Resolved = z.object({
-  url: z.string().url(),
+  url: z.string().min(1),
   kind: z.enum(['file', 'hls']),
-  headers: z.record(z.string()).optional(),
-  subtitles: z.array(z.object({ lang: z.string(), label: z.string(), url: z.string().url() })).optional(),
-  resolutions: z.array(z.number().int().positive()).default([]),
-  selectedResolution: z.number().int().positive().optional(),
-});
+  headers: z.record(z.string()).nullish(),
+  subtitles: z.array(z.unknown()).nullish(),
+  resolutions: z.array(z.number()).nullish(),
+  selectedResolution: z.number().nullish(),
+}).transform((r) => ({
+  url: r.url,
+  kind: r.kind,
+  headers: r.headers || {},
+  subtitles: (r.subtitles || []).map((x) => Sub.safeParse(x)).filter((x) => x.success).map((x) => x.data),
+  resolutions: (r.resolutions || []).filter((n) => Number.isInteger(n) && n > 0),
+  selectedResolution: Number.isInteger(r.selectedResolution) && r.selectedResolution > 0 ? r.selectedResolution : undefined,
+}));
 const Health = z.object({ ok: z.boolean(), core: z.string() });
 
 const BASE = process.env.CORE_URL || 'http://127.0.0.1:7070';
@@ -52,7 +60,14 @@ async function call(path, opts = {}) {
   }
   throw lastError || new CoreBadResponse();
 }
-const parse = (schema, v) => { const p = schema.safeParse(v); if (!p.success) throw new CoreBadResponse(); return p.data; };
+const parse = (schema, v) => {
+  const p = schema.safeParse(v);
+  if (!p.success) {
+    console.error('core schema mismatch:', p.error.issues.map((x) => `${x.path.join('.') || '(root)'}: ${x.message}`).join(' | '));
+    throw new CoreBadResponse();
+  }
+  return p.data;
+};
 
 export const core = {
   enabled: () => Boolean(BASE),
