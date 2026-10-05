@@ -205,25 +205,25 @@ app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1
 
   let r;
   let lastStatus = 0;
-  for (let attempt = 0; attempt < 3 && !ac.signal.aborted; attempt += 1) {
-    const timer = setTimeout(() => ac.abort(new Error('header-timeout')), 45000);
+  let lastErr = '';
+  for (let attempt = 0; attempt < 2 && !ac.signal.aborted; attempt += 1) {
     try {
-      r = await fetch(e.url, { headers, signal: ac.signal, redirect: 'follow' });
-      clearTimeout(timer);
+      r = await fetch(e.url, { headers, signal: AbortSignal.any([ac.signal, AbortSignal.timeout(20000)]), redirect: 'follow' });
       if (r.ok || (r.status >= 400 && r.status < 500 && r.status !== 429 && r.status !== 408)) break;
       lastStatus = r.status;
       try { await r.body?.cancel(); } catch {}
       r = undefined;
-    } catch {
-      clearTimeout(timer);
+    } catch (err) {
       r = undefined;
+      lastErr = err?.cause?.code || err?.code || (err?.name === 'TimeoutError' ? 'timeout' : err?.name) || 'network';
       if (ac.signal.aborted) break;
     }
-    if (attempt < 2) await new Promise((res) => setTimeout(res, 600 * (attempt + 1)));
+    if (attempt < 1) await new Promise((res) => setTimeout(res, 800));
   }
   if (!r) {
-    if (ac.signal.aborted && reply.raw.destroyed) return;
-    return reply.code(502).send({ error: 'upstream_failed', message: `The source could not be reached${lastStatus ? ` (HTTP ${lastStatus})` : ''}. Try another quality or try again.` });
+    if (ac.signal.aborted) return reply;
+    req.log.warn({ status: lastStatus, err: lastErr }, 'stream upstream failed');
+    return reply.code(502).send({ error: 'upstream_failed', message: `The source could not be reached (${lastStatus ? `HTTP ${lastStatus}` : lastErr}). Try another quality or try again.` });
   }
   if (!r.ok && r.status !== 416) {
     try { await r.body?.cancel(); } catch {}

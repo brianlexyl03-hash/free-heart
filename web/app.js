@@ -592,7 +592,7 @@ async function playDownload(t) {
     const host = document.getElementById('download-player');
     const key = `free.pos.dl.${t.taskId}`;
     activePlayer = mountPlayer(host, {
-      src: URL.createObjectURL(file.slice(0, file.size, t.type || 'video/mp4')), title: t.name, kind: 'local', probe: false,
+      src: URL.createObjectURL(file.slice(0, file.size, /^video\//.test(t.type || '') ? t.type : 'video/mp4')), title: t.name, kind: 'local', probe: false,
       info: { size: file.size, mime: t.type || 'video/mp4', ranges: true }, startAt: Number(localStorage.getItem(key) || 0),
       onProgress: (x, d) => { try { if (Number.isFinite(d) && d - x < 60) localStorage.removeItem(key); else localStorage.setItem(key, String(Math.floor(x))); } catch { /* ignore */ } },
     });
@@ -619,8 +619,11 @@ async function downloadsClick(event) {
 }
 function downloadsPage() {
   app.innerHTML = '<section class="page-heading"><span class="eyebrow">Your library</span><h1>Downloads</h1><p>Private files saved in this browser only. Up to three download at once, even while you browse.</p></section><div class="dl-summary" id="dl-summary"></div><div id="dl-list" class="download-list"></div><div id="download-player" class="dl-player"></div>';
-  renderSummary();
-  renderDownloadList();
+  try { renderSummary(); renderDownloadList(); }
+  catch (e) {
+    document.getElementById('dl-list').innerHTML = `<div class="notice error"><strong>Downloads could not be shown</strong><span>${esc(e.message)}</span><button id="dl-reset" class="secondary">Reset list &amp; reload</button></div>`;
+    document.getElementById('dl-reset').onclick = async () => { try { const db = await openDb(); await new Promise((r) => { const t = db.transaction(STORE, 'readwrite'); t.objectStore(STORE).clear(); t.oncomplete = r; t.onerror = r; }); } catch { /* ignore */ } localStorage.removeItem('free.downloads'); location.reload(); };
+  }
   app.onclick = downloadsClick;
 }
 if ('serviceWorker' in navigator) {

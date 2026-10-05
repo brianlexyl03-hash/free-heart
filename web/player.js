@@ -386,6 +386,7 @@ export function mountPlayer(host, opts) {
   async function explain() {
     const codes = { 1: 'Playback was cancelled.', 2: 'The network dropped while loading the video.', 3: 'The video could not be decoded.', 4: 'The video source could not be loaded.' };
     let msg = codes[video.error?.code] || 'The video could not be played.';
+    if (src && src.startsWith('blob:')) return 'This saved file uses a format or codec this browser cannot play (common with .mkv). Delete it and download another quality, or open it in VLC.';
     if (src && !src.startsWith('blob:')) {
       try {
         const r = await fetch(src, { headers: { range: 'bytes=0-0' } });

@@ -99,7 +99,8 @@ async function runDownload(task) {
       try { response = await fetch(resolved.stream, { headers: existing > 0 ? { range: `bytes=${existing}-` } : {}, signal: ac.signal, credentials: 'same-origin' }); }
       catch (e) { if (ac.signal.aborted) throw e; }
       if (!response || response.status >= 500 || response.status === 429) {
-        if (attempts >= 7) throw new Error(response ? `The server kept failing (HTTP ${response.status}). Try again later.` : 'Connection lost. Try again when you are online.');
+        const bj = response ? await response.json().catch(() => ({})) : {};
+        if (attempts >= 5) throw new Error(response ? (bj.message || `The server kept failing (HTTP ${response.status}). Try again later.`) : 'Connection lost. Try again when you are online.');
         await sleep(1500 * attempts, ac.signal);
         existing = (await handle.getFile()).size;
         continue;
@@ -121,7 +122,7 @@ async function runDownload(task) {
       const cr = response.headers.get('content-range');
       const len = Number(response.headers.get('content-length')) || 0;
       total = partial ? (Number((cr || '').split('/')[1]) || existing + len) : len;
-      type = response.headers.get('content-type') || type;
+      { const ct = response.headers.get('content-type') || ''; if (/^video\//.test(ct)) type = ct; else if (!/^video\//.test(type)) type = 'video/mp4'; }
       let writable = await handle.createWritable({ keepExistingData: existing > 0 });
       if (existing > 0) await writable.seek(existing); else await writable.truncate(0);
       const reader = response.body.getReader();
@@ -146,14 +147,14 @@ async function runDownload(task) {
       } catch (e) {
         await writable.close().catch(() => {}); // keep what we have for resuming
         if (ac.signal.aborted) throw e;
-        if (attempts >= 7) throw new Error('The connection kept dropping. Tap Retry to resume where it stopped.');
+        if (attempts >= 5) throw new Error('The connection kept dropping. Tap Retry to resume where it stopped.');
         existing = (await handle.getFile()).size;
         await sleep(1500 * attempts, ac.signal);
         continue;
       }
       existing = received;
       if (total && received < total) {
-        if (attempts >= 7) throw new Error('The download ended early. Tap Retry to resume.');
+        if (attempts >= 5) throw new Error('The download ended early. Tap Retry to resume.');
         continue;
       }
       break;
