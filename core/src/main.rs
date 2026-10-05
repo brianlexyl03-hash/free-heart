@@ -7,7 +7,7 @@ use axum::{
 };
 use moviebox_tui::{
     providers::{
-        Provider, ReleaseProvider,
+        ReleaseProvider,
         models::{CatalogItem, MediaDetails, MediaType, ProviderError, ProviderKind, Release},
     },
     service::MovieBoxService,
@@ -145,7 +145,9 @@ struct HealthResponse {
 
 fn item_response(item: CatalogItem) -> ItemResponse {
     ItemResponse {
-        id: item.id.value,
+        // Keep the provider in the opaque web ID so playback can route to the
+        // same provider that produced the search result.
+        id: format!("{}:{}", item.id.provider.cache_key(), item.id.value),
         title: item.title,
         year: item.year,
         poster: item.poster_url,
@@ -177,7 +179,7 @@ fn title_response(details: MediaDetails) -> TitleResponse {
         })
         .collect();
     TitleResponse {
-        id: details.id.value,
+        id: format!("{}:{}", details.id.provider.cache_key(), details.id.value),
         title: details.title,
         year: details.year,
         poster: details.poster_url,
@@ -187,6 +189,52 @@ fn title_response(details: MediaDetails) -> TitleResponse {
         },
         overview: details.description,
         episodes,
+    }
+}
+
+fn parse_media_id(raw: &str) -> Result<(ProviderKind, String), ApiError> {
+    let Some((provider_name, subject_id)) = raw.split_once(':') else {
+        // IDs created by older builds were MovieBox-only IDs.
+        return Ok((ProviderKind::MovieBox, raw.to_string()));
+    };
+    let provider = ProviderKind::parse(provider_name)
+        .ok_or_else(|| ApiError::bad_request("Unknown media provider"))?;
+    if subject_id.is_empty() {
+        return Err(ApiError::bad_request("Invalid media id"));
+    }
+    Ok((provider, subject_id.to_string()))
+}
+
+async fn provider_releases(
+    service: &MovieBoxService,
+    provider: ProviderKind,
+    subject_id: &str,
+    season: usize,
+    episode: usize,
+) -> Result<Vec<Release>, ProviderError> {
+    match provider {
+        ProviderKind::MovieBox => {
+            service
+                .client
+                .episode_streams(subject_id, season, episode)
+                .await
+        }
+        ProviderKind::FourKHdHub => {
+            service
+                .fourk_client
+                .as_ref()
+                .ok_or_else(|| ProviderError::Unavailable("4KHDHub is unavailable".to_string()))?
+                .episode_streams(subject_id, season, episode)
+                .await
+        }
+        ProviderKind::Dramachi => service
+            .dramachi_client
+            .episode_streams(subject_id, season, episode)
+            .await
+            .map_err(ProviderError::from),
+        _ => Err(ProviderError::Unavailable(format!(
+            "{provider} playback is not enabled for the web adapter"
+        ))),
     }
 }
 
@@ -229,12 +277,36 @@ async fn search(
         return Err(ApiError::bad_request("q must contain 1–100 characters"));
     }
     let page = query.page.unwrap_or(1).clamp(1, 50);
-    let items = Provider::search(&state.service.client, q, page)
-        .await
-        .map_err(ApiError::provider)?;
-    let has_more = items.len() >= 15;
+    // Search the primary source first, then switch automatically when it has
+    // no results or is unavailable. Provider IDs are preserved in the result.
+    let providers = [
+        ProviderKind::MovieBox,
+        ProviderKind::FourKHdHub,
+        ProviderKind::Dramachi,
+    ];
+    let mut results = Vec::new();
+    let mut last_error = None;
+    for provider in providers {
+        match state.service.search_typed(provider, q, page).await {
+            Ok(mut items) => results.append(&mut items),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    if results.is_empty() {
+        if let Some(error) = last_error {
+            return Err(ApiError::provider(error));
+        }
+        return Ok(Json(SearchResponse {
+            results: Vec::new(),
+            page,
+            has_more: false,
+        }));
+    }
+    results.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
+    results.dedup_by(|left, right| left.id == right.id);
+    let has_more = results.len() >= 15;
     Ok(Json(SearchResponse {
-        results: items.into_iter().map(item_response).collect(),
+        results: results.into_iter().map(item_response).collect(),
         page,
         has_more,
     }))
@@ -247,11 +319,19 @@ async fn title(
     if id.is_empty() || id.len() > 96 {
         return Err(ApiError::bad_request("Invalid title id"));
     }
+    let (provider, subject_id) = parse_media_id(&id)?;
     let details = state
         .service
-        .details_typed(ProviderKind::MovieBox, &id)
+        .details_typed(provider, &subject_id)
         .await
-        .map_err(ApiError::provider)?;
+        .map_err(|error| match error {
+            ProviderError::NotFound => ApiError {
+                status: StatusCode::NOT_FOUND,
+                kind: "title_not_found",
+                message: "This title is not available from the selected source".to_string(),
+            },
+            other => ApiError::provider(other),
+        })?;
     Ok(Json(title_response(details)))
 }
 
@@ -277,15 +357,20 @@ async fn resolve(
         return Err(ApiError::bad_request("Invalid title id"));
     }
     let (season, episode) = episode_parts(request.episode.as_deref())?;
+    let (provider, subject_id) = parse_media_id(&request.id)?;
     let details = state
         .service
-        .details_typed(ProviderKind::MovieBox, &request.id)
+        .details_typed(provider, &subject_id)
         .await
-        .map_err(ApiError::provider)?;
-    let releases = state
-        .service
-        .client
-        .episode_streams(&request.id, season, episode)
+        .map_err(|error| match error {
+            ProviderError::NotFound => ApiError {
+                status: StatusCode::NOT_FOUND,
+                kind: "title_not_found",
+                message: "This title is not available from the selected source".to_string(),
+            },
+            other => ApiError::provider(other),
+        })?;
+    let releases = provider_releases(&state.service, provider, &subject_id, season, episode)
         .await
         .map_err(ApiError::provider)?;
     let mut resolutions: Vec<u32> = releases
@@ -310,9 +395,9 @@ async fn resolve(
                 .find(|release| release.direct_url().is_some())
         })
         .ok_or_else(|| ApiError {
-            status: StatusCode::BAD_GATEWAY,
-            kind: "no_stream",
-            message: "The upstream provider returned no playable stream".to_string(),
+            status: StatusCode::NOT_FOUND,
+            kind: "stream_unavailable",
+            message: format!("No playable stream is available from {provider}; try another search result or quality"),
         })?;
     let url = release.direct_url().unwrap_or_default().to_string();
     let kind = if url.to_ascii_lowercase().contains(".m3u8") {
@@ -320,28 +405,32 @@ async fn resolve(
     } else {
         "file"
     };
-    let subtitles = if let Some(resource_id) = release.resource_id.as_deref() {
-        state
-            .service
-            .get_ext_captions(
-                &request.id,
-                resource_id,
-                &details.sibling_ids(),
-                season,
-                episode,
-            )
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|subtitle| {
-                subtitle.url.starts_with("http://") || subtitle.url.starts_with("https://")
-            })
-            .map(|subtitle| SubtitleResponse {
-                lang: subtitle.name.clone(),
-                label: subtitle.name,
-                url: subtitle.url,
-            })
-            .collect()
+    let subtitles = if provider == ProviderKind::MovieBox {
+        if let Some(resource_id) = release.resource_id.as_deref() {
+            state
+                .service
+                .get_ext_captions(
+                    &request.id,
+                    resource_id,
+                    &details.sibling_ids(),
+                    season,
+                    episode,
+                )
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|subtitle| {
+                    subtitle.url.starts_with("http://") || subtitle.url.starts_with("https://")
+                })
+                .map(|subtitle| SubtitleResponse {
+                    lang: subtitle.name.clone(),
+                    label: subtitle.name,
+                    url: subtitle.url,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
     } else {
         Vec::new()
     };
