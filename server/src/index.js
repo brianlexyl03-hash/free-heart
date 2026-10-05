@@ -136,7 +136,7 @@ app.get('/api/social', async () => ({
 
 app.get('/api/title/:id', async (req) => core.title(Id.parse(req.params.id)));
 
-app.post('/api/resolve', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
+app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute' } } }, async (req) => {
   const b = z.object({ id: Id, episode: z.string().max(64).optional(), resolution: Resolution.nullish() }).parse(req.body);
   const r = await core.resolve(b.id, b.episode, b.resolution ?? undefined);
   return {

@@ -1,3 +1,4 @@
+import { mountPlayer } from './player.js';
 const app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n) => n > 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${(n / 1e6).toFixed(1)} MB`;
@@ -169,126 +170,403 @@ async function home() {
   checkUpstreamUpdate();
 }
 
+let activePlayer = null;
+const stopPlayer = () => { if (activePlayer) { activePlayer.destroy(); activePlayer = null; } };
+const parseEp = (key) => { const m = /^s(\d+)e(\d+)$/i.exec(String(key || '')); return m ? { s: Number(m[1]), e: Number(m[2]) } : { s: 0, e: 0 }; };
+const shortEp = (label) => String(label || '').split(' — ')[0];
+const epTitle = (ep) => ep.label.replace(/^S\d+E\d+\s*[—-]?\s*/i, '').trim() || `Episode ${parseEp(ep.key).e}`;
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+function groupSeasons(episodes) {
+  const map = new Map();
+  for (const ep of episodes) { const { s } = parseEp(ep.key); if (!map.has(s)) map.set(s, []); map.get(s).push(ep); }
+  for (const list of map.values()) list.sort((a, b) => parseEp(a.key).e - parseEp(b.key).e);
+  return new Map([...map.entries()].sort((a, b) => a[0] - b[0]));
+}
+const epTask = (id, ep) => [...dlTasks.values()].find((t) => t.groupId === id && (t.episode || null) === (ep || null));
+
+function paintEpisodeStates(id) {
+  document.querySelectorAll('#episodes [data-state]').forEach((el) => {
+    const t = epTask(id, el.dataset.state);
+    el.textContent = !t ? '' : t.status === 'done' ? '✓ Saved' : t.status === 'error' ? 'Failed' : t.status === 'downloading' ? `${pctOf(t)}%` : t.status === 'resolving' ? '…' : 'Queued';
+    el.dataset.s = t?.status || '';
+  });
+}
+
 async function titlePage(id) {
   app.innerHTML = '<div class="loading"><i></i><span>Loading title…</span></div>';
   try {
     const data = await api(`/api/title/${encodeURIComponent(id)}`);
     rememberTaste(data.title);
     const episodes = data.episodes || [];
-    app.innerHTML = `<section class="detail-hero" style="--poster:url('${esc(data.poster || '')}')"><div class="detail-poster">${data.poster ? `<img src="${esc(data.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}</div><div class="detail-copy"><span class="eyebrow">${esc(data.type || 'Feature')}</span><h1>${esc(data.title)}</h1><div class="meta"><span>${esc(data.year || '')}</span><span>HD</span><span>16+</span></div><p>${esc(data.overview || 'A new story is waiting for you.')}</p><div class="actions"><button id="play" class="primary">▶ Play</button><button id="download" class="secondary">⇩ Download</button></div>${episodes.length ? `<label class="episode-picker">Episode<select id="episode">${episodes.map((ep) => `<option value="${esc(ep.key)}">${esc(ep.label)}</option>`).join('')}</select></label>` : ''}<div id="title-status"></div></div></section><section class="content-section"><div class="row-heading"><h2>More details</h2></div><div class="detail-facts"><span><b>Title</b>${esc(data.title)}</span><span><b>Format</b>${esc(data.type || 'Movie')}</span><span><b>Offline</b>Private browser storage</span></div></section>`;
-    const episode = () => document.getElementById('episode')?.value;
-    document.getElementById('play').onclick = () => { location.hash = `#/watch/${encodeURIComponent(id)}${episode() ? `?ep=${encodeURIComponent(episode())}` : ''}`; };
-    document.getElementById('download').onclick = () => download(id, episode(), data.title + (episode() ? ` · ${episode()}` : ''), document.getElementById('title-status'));
+    const seasons = groupSeasons(episodes);
+    const isSeries = episodes.length > 0;
+    let season = [...seasons.keys()][0];
+    let current = isSeries ? seasons.get(season)[0].key : null;
+    const seasonSelect = seasons.size > 1 ? `<label class="episode-picker">Season<select id="season">${[...seasons.entries()].map(([n, l]) => `<option value="${n}">Season ${n} · ${l.length} ep</option>`).join('')}</select></label>` : '';
+    app.innerHTML = `<section class="detail-hero" style="--poster:url('${esc(data.poster || '')}')"><div class="detail-poster">${data.poster ? `<img src="${esc(data.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}</div><div class="detail-copy"><span class="eyebrow">${esc(data.type || 'Feature')}</span><h1>${esc(data.title)}</h1><div class="meta"><span>${esc(data.year || '')}</span><span>HD</span><span>16+</span>${isSeries ? `<span>${seasons.size} season${seasons.size > 1 ? 's' : ''} · ${episodes.length} episodes</span>` : ''}</div><p>${esc(data.overview || 'A new story is waiting for you.')}</p><div class="actions"><button id="play" class="primary">▶ Play</button><button id="download" class="secondary">⇩ Download</button></div><div id="title-status"></div></div></section>${isSeries ? `<section class="content-section"><div class="row-heading"><h2>Episodes</h2>${seasonSelect}</div><div id="episodes" class="ep-list"></div></section>` : ''}<section class="content-section"><div class="row-heading"><h2>More details</h2></div><div class="detail-facts"><span><b>Title</b>${esc(data.title)}</span><span><b>Format</b>${esc(data.type || 'Movie')}</span><span><b>Offline</b>Private browser storage</span></div></section>`;
+    const status = document.getElementById('title-status');
+    const playBtn = document.getElementById('play');
+    const watchHash = (ep) => `#/watch/${encodeURIComponent(id)}${ep ? `?ep=${encodeURIComponent(ep)}` : ''}`;
+    const paintPlay = () => { playBtn.textContent = isSeries ? `▶ Play ${shortEp(episodes.find((e) => e.key === current)?.label || current)}` : '▶ Play'; };
+    const box = document.getElementById('episodes');
+    const paintEpisodes = () => {
+      if (!box) return;
+      box.innerHTML = (seasons.get(season) || []).map((ep) => `<div class="ep-row ${ep.key === current ? 'sel' : ''}"><button class="ep-main" data-pick="${esc(ep.key)}"><b>${parseEp(ep.key).e}</b><span>${esc(epTitle(ep))}</span></button><span class="ep-state" data-state="${esc(ep.key)}"></span><button class="ep-btn" data-play="${esc(ep.key)}" aria-label="Play episode">▶</button><button class="ep-btn" data-dl="${esc(ep.key)}" aria-label="Download episode">⇩</button></div>`).join('');
+      paintEpisodeStates(id);
+    };
+    paintPlay(); paintEpisodes();
+    box?.addEventListener('click', (event) => {
+      const el = event.target.closest('[data-pick],[data-play],[data-dl]');
+      if (!el) return;
+      if (el.dataset.pick) { current = el.dataset.pick; paintPlay(); paintEpisodes(); }
+      else if (el.dataset.play) location.hash = watchHash(el.dataset.play);
+      else if (el.dataset.dl) { const ep = episodes.find((e) => e.key === el.dataset.dl); queueDownloads({ id, data, items: [{ key: ep.key, label: ep.label }], resolution: Number(localStorage.getItem('free.dlq')) || null, out: status }); }
+    });
+    document.getElementById('season')?.addEventListener('change', (event) => { season = Number(event.target.value); current = seasons.get(season)[0].key; paintPlay(); paintEpisodes(); });
+    playBtn.onclick = () => { location.hash = watchHash(current); };
+    document.getElementById('download').onclick = () => openDownloadSheet({ id, data, seasons, season, current, out: status });
   } catch (error) { app.innerHTML = errBox(error); }
 }
 
-function playerMarkup(id, episode, resolved) {
-  const tracks = (resolved.subtitles || []).map((s, i) => `<track kind="subtitles" srclang="${subtitleCode(s.lang)}" label="${esc(s.label)}" src="${esc(s.src)}" ${i ? '' : 'default'}>`).join('');
-  return `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="video-stage" class="video-shell"><video id="player" controls playsinline autoplay src="${esc(resolved.stream)}">${tracks}</video></div><div class="vlc-controls"><button id="mute" class="secondary" title="Mute">🔊</button><label class="range-control">Volume <input id="volume" type="range" min="0" max="1" step="0.01" value="1"></label><label class="range-control">Brightness <input id="brightness" type="range" min="60" max="140" step="1" value="100"></label><label class="range-control">Fit <select id="fit"><option value="contain">Fit</option><option value="cover">Fill</option></select></label><button id="fullscreen" class="secondary">⛶ Fullscreen</button><button id="pip" class="secondary">▣ PiP</button><button id="wake" class="secondary">☀ Keep awake</button></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>Choose your quality</h2></div>${qualitySelect(resolved.resolutions, resolved.selectedResolution)}</div><div id="player-message" class="notice subtle">${resolved.kind === 'hls' ? 'HLS playback depends on browser support. Safari and many mobile browsers support it natively.' : 'VLC-style controls are available below: volume, visual brightness, fit, fullscreen, PiP and keep-awake.'}</div>`;
+function openDownloadSheet({ id, data, seasons, season, current, out }) {
+  document.querySelector('.sheet-backdrop')?.remove();
+  const episodes = data.episodes || [];
+  const isSeries = episodes.length > 0;
+  const cur = episodes.find((e) => e.key === current) || episodes[0];
+  const options = [];
+  if (!isSeries) options.push({ head: 'Movie' }, { t: data.title, s: 'Full movie · 1 file', items: [{ key: null, label: '' }] });
+  else {
+    options.push({ head: 'This episode' }, { t: cur.label, s: 'Only this episode', items: [{ key: cur.key, label: cur.label }] });
+    options.push({ head: 'Season' });
+    for (const [n, list] of seasons) options.push({ t: `Season ${n}`, s: `${list.length} episode${list.length > 1 ? 's' : ''}${n === season ? ' · currently open' : ''}`, items: list.map((e) => ({ key: e.key, label: e.label })) });
+    options.push({ head: 'Entire series' }, { t: `All ${seasons.size} season${seasons.size > 1 ? 's' : ''}`, s: `${episodes.length} episodes · downloaded one after another, 3 at a time`, items: episodes.map((e) => ({ key: e.key, label: e.label })) });
+  }
+  const qs = [['', 'Best available'], ['2160', '4K · 2160p'], ['1080', 'Full HD · 1080p'], ['720', 'HD · 720p'], ['480', 'SD · 480p'], ['360', 'Low · 360p (saves data)']];
+  const savedQ = localStorage.getItem('free.dlq') || '';
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet-backdrop';
+  sheet.innerHTML = `<div class="sheet" role="dialog" aria-label="Download options"><div class="sheet-grab"></div><h3>Download</h3><p class="sheet-sub">${esc(data.title)}</p><label class="sheet-field">Quality<select id="dl-quality">${qs.map(([v, l]) => `<option value="${v}" ${v === savedQ ? 'selected' : ''}>${l}</option>`).join('')}</select></label>${options.map((o, i) => o.head ? `<div class="sheet-head">${esc(o.head)}</div>` : `<button class="sheet-opt" data-i="${i}"><b>${esc(o.t)}</b><small>${esc(o.s)}</small><span>⇩</span></button>`).join('')}<p class="sheet-foot" id="sheet-foot">Items already saved are skipped.</p><button class="ghost sheet-cancel">Cancel</button></div>`;
+  document.body.appendChild(sheet);
+  navigator.storage?.estimate?.().then(({ usage, quota }) => { const f = document.getElementById('sheet-foot'); if (f && quota) f.textContent = `Free space about ${fmt(Math.max(0, quota - usage))}. Items already saved are skipped.`; }).catch(() => {});
+  const close = () => sheet.remove();
+  sheet.addEventListener('click', (event) => {
+    if (event.target === sheet || event.target.closest('.sheet-cancel')) return close();
+    const b = event.target.closest('.sheet-opt');
+    if (!b) return;
+    const quality = document.getElementById('dl-quality').value;
+    localStorage.setItem('free.dlq', quality);
+    close();
+    queueDownloads({ id, data, items: options[Number(b.dataset.i)].items, resolution: Number(quality) || null, out });
+  });
+}
+
+function playerHint(kind) {
+  return kind === 'hls'
+    ? 'HLS playback depends on browser support. Safari and many mobile browsers support it natively.'
+    : 'Swipe up/down on the left half for brightness and on the right half for volume. Swipe sideways to seek. Double-tap the left or right side to skip 10 s. Pinch to zoom. Tap once for controls.';
 }
 
 async function watchPage(id, episode) {
   app.innerHTML = '<div class="loading"><i></i><span>Preparing your stream…</span></div>';
   try {
-    let resolved = await resolveStream(id, episode);
-    app.innerHTML = playerMarkup(id, episode, resolved);
-    const player = document.getElementById('player');
-    const stage = document.getElementById('video-stage');
+    const [first, meta] = await Promise.all([resolveStream(id, episode), api(`/api/title/${encodeURIComponent(id)}`).catch(() => null)]);
+    let resolved = first;
+    const epLabel = episode ? ((meta?.episodes || []).find((e) => e.key === episode)?.label || episode) : '';
+    const title = meta ? `${meta.title}${epLabel ? ` · ${epLabel}` : ''}` : (epLabel || 'Now playing');
+    let res = resolved.selectedResolution;
+    app.innerHTML = `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="vp-host" class="vp-host"></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>${esc(title)}</h2></div>${qualitySelect(resolved.resolutions, res)}</div><div id="player-message" class="notice subtle">${playerHint(resolved.kind)}</div>`;
     const message = document.getElementById('player-message');
-    let wakeLock = null;
-    const acquireWakeLock = async () => {
-      if (!('wakeLock' in navigator)) { message.textContent = 'Keep-awake is not supported by this browser.'; return; }
-      try { wakeLock = await navigator.wakeLock.request('screen'); document.getElementById('wake').textContent = '☀ Awake on'; wakeLock.addEventListener('release', () => { wakeLock = null; document.getElementById('wake').textContent = '☀ Keep awake'; }); }
-      catch { message.textContent = 'The browser blocked keep-awake; tap the button again while the player is active.'; }
-    };
-    document.getElementById('volume').oninput = (event) => { player.volume = Number(event.target.value); player.muted = player.volume === 0; document.getElementById('mute').textContent = player.muted ? '🔇' : '🔊'; };
-    document.getElementById('mute').onclick = () => { player.muted = !player.muted; document.getElementById('mute').textContent = player.muted ? '🔇' : '🔊'; };
-    document.getElementById('brightness').oninput = (event) => { player.style.filter = `brightness(${Number(event.target.value) / 100})`; };
-    document.getElementById('fit').onchange = (event) => { player.style.objectFit = event.target.value; };
-    document.getElementById('fullscreen').onclick = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await stage.requestFullscreen(); } catch { message.textContent = 'Fullscreen is not available in this browser.'; } };
-    document.getElementById('pip').onclick = async () => { try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else if (document.pictureInPictureEnabled) await player.requestPictureInPicture(); else throw new Error(); } catch { message.textContent = 'Picture-in-Picture is not available in this browser.'; } };
-    document.getElementById('wake').onclick = async () => { if (wakeLock) { await wakeLock.release(); wakeLock = null; localStorage.setItem('free.keepAwake', 'off'); document.getElementById('wake').textContent = '☀ Keep awake'; } else { await acquireWakeLock(); localStorage.setItem('free.keepAwake', wakeLock ? 'on' : 'off'); } };
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wakeLock === null && !player.paused) acquireWakeLock(); }, { once: false });
-    player.addEventListener('play', () => { if (localStorage.getItem('free.keepAwake') === 'on') acquireWakeLock(); });
-    player.addEventListener('pause', () => { if (wakeLock) wakeLock.release().catch(() => {}); });
-    player.addEventListener('ended', () => { if (wakeLock) wakeLock.release().catch(() => {}); });
-    document.addEventListener('keydown', (event) => { if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return; if (event.key === 'f') document.getElementById('fullscreen').click(); if (event.key === 'm') document.getElementById('mute').click(); if (event.key === ' ') { event.preventDefault(); player.paused ? player.play() : player.pause(); } }, { once: true });
+    const posKey = `free.pos.${id}|${episode || ''}`;
+    const subs = (r) => (r.subtitles || []).map((s) => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) }));
     let adShown = false;
-    document.getElementById('quality')?.addEventListener('change', async (event) => {
-      const previous = player.currentTime;
+    let vp;
+    const switchQuality = async (r) => {
       message.textContent = 'Switching quality…';
       try {
-        resolved = await resolveStream(id, episode, Number(event.target.value));
-        player.src = resolved.stream;
-        player.load();
-        player.currentTime = previous;
-        await player.play().catch(() => {});
+        resolved = await resolveStream(id, episode, r);
+        res = resolved.selectedResolution || r;
+        vp.setSource(resolved.stream, { startAt: vp.video.currentTime, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res });
+        const sel = document.getElementById('quality'); if (sel) sel.value = String(res);
         message.textContent = 'Quality switched.';
       } catch (error) { message.innerHTML = errBox(error); }
+    };
+    vp = mountPlayer(document.getElementById('vp-host'), {
+      src: resolved.stream, title, kind: resolved.kind, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res,
+      startAt: Number(localStorage.getItem(posKey) || 0),
+      onProgress: async (t, d) => {
+        try { if (Number.isFinite(d) && d - t < 60) localStorage.removeItem(posKey); else localStorage.setItem(posKey, String(Math.floor(t))); } catch { /* ignore */ }
+        if (!adShown && t >= 3000) {
+          adShown = true;
+          vp.video.pause();
+          if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+          await showAdGate('Thanks for watching. Continue when you’re ready.');
+          await vp.video.play().catch(() => {});
+        }
+      },
+      onQuality: switchQuality,
+      onRetry: async () => { resolved = await resolveStream(id, episode, res); return { src: resolved.stream, tracks: subs(resolved) }; },
     });
-    player.addEventListener('timeupdate', async () => {
-      if (!adShown && player.currentTime >= 3000) {
-        adShown = true;
-        player.pause();
-        await showAdGate('Thanks for watching. Continue when you’re ready.');
-        await player.play().catch(() => {});
-      }
-    });
+    activePlayer = vp;
+    document.getElementById('quality')?.addEventListener('change', (event) => switchQuality(Number(event.target.value)));
   } catch (error) { app.innerHTML = errBox(error) + `<a class="secondary back-button" href="${titleUrl(id)}">← Back to title</a>`; }
 }
 
-const META = 'free.downloads';
-const metas = () => JSON.parse(localStorage.getItem(META) || '[]');
-const saveMetas = (items) => localStorage.setItem(META, JSON.stringify(items));
+// ---------- downloads: IndexedDB is the single source of truth, the service worker does the work ----------
+const DB_NAME = 'free-downloads-v1';
+const STORE = 'tasks';
+let dbp;
+const openDb = () => (dbp ||= new Promise((resolve, reject) => {
+  const r = indexedDB.open(DB_NAME, 1);
+  r.onupgradeneeded = () => r.result.createObjectStore(STORE, { keyPath: 'taskId' });
+  r.onsuccess = () => resolve(r.result);
+  r.onerror = () => reject(r.error);
+}));
+const dbTx = async (mode, fn) => {
+  const db = await openDb();
+  return new Promise((resolve, reject) => { const t = db.transaction(STORE, mode); const req = fn(t.objectStore(STORE)); t.oncomplete = () => resolve(req?.result); t.onerror = () => reject(t.error); });
+};
+const dbAll = () => dbTx('readonly', (s) => s.getAll());
+const dbPut = (task) => dbTx('readwrite', (s) => s.put(task));
+const dbDel = (id) => dbTx('readwrite', (s) => s.delete(id));
 
-async function download(id, episode, name, output, resolution) {
-  if (!navigator.storage?.getDirectory) { output.innerHTML = '<div class="notice error">This browser does not support private downloads.</div>'; return; }
-  await showAdGate('Watch this short ad before your download starts.');
-  output.innerHTML = '<div class="loading compact"><i></i><span>Adding to background queue…</span></div>';
+const dlTasks = new Map();
+const removed = new Set();
+const isActive = (s) => s === 'queued' || s === 'resolving' || s === 'downloading';
+const pctOf = (t) => (t.status === 'done' ? 100 : t.total ? Math.min(99, Math.floor(((t.received || 0) / t.total) * 100)) : 0);
+function counts() {
+  const c = { downloading: 0, queued: 0, done: 0, error: 0 };
+  for (const t of dlTasks.values()) { if (t.status === 'downloading' || t.status === 'resolving') c.downloading += 1; else if (t.status === 'queued') c.queued += 1; else if (t.status === 'done') c.done += 1; else c.error += 1; }
+  return c;
+}
+function paintBadge() {
+  const badge = document.querySelector('#nav-dl .nav-badge');
+  if (!badge) return;
+  const c = counts(); const n = c.downloading + c.queued;
+  badge.hidden = n === 0; badge.textContent = String(n);
+  document.title = n ? `(${n}↓) free❤️‍🔥` : 'free❤️‍🔥';
+}
+async function swPost(message) {
+  if (!('serviceWorker' in navigator)) return false;
+  const reg = await navigator.serviceWorker.ready;
+  const worker = reg.active || navigator.serviceWorker.controller;
+  if (!worker) return false;
+  worker.postMessage(message);
+  return true;
+}
+function syncDownloads() {
+  const open = [...dlTasks.values()].filter((t) => isActive(t.status));
+  if (open.length) swPost({ type: 'SYNC', tasks: open }).catch(() => {});
+}
+async function removeFile(file) { if (!file || !navigator.storage?.getDirectory) return; try { const root = await navigator.storage.getDirectory(); await root.removeEntry(file); } catch { /* already gone */ } }
+
+async function loadDownloads() {
   try {
-    const resolved = await resolveStream(id, episode, resolution);
-    if (resolved.kind !== 'file') throw new Error('This source is HLS and cannot be saved as one file. Use Play instead.');
-    if (!('serviceWorker' in navigator)) throw new Error('Background downloads are not supported by this browser.');
-    const taskId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const task = { taskId, name, stream: resolved.stream, kind: resolved.kind, file: null, size: 0, date: Date.now(), status: 'queued', type: 'video/mp4' };
-    saveMetas([...metas(), task]);
-    const registration = await navigator.serviceWorker.ready;
-    registration.active.postMessage({ type: 'DOWNLOAD', task });
-    output.innerHTML = '<div class="notice success">Queued. You can leave this screen; up to three downloads run together.</div>';
-  } catch (error) { output.innerHTML = errBox(error); }
-}
-
-async function downloadsPage() {
-  const items = metas();
-  const status = (item) => item.status === 'done' ? `${fmt(item.size || 0)} · Ready` : item.status === 'error' ? `Error · ${item.error || 'Download failed'}` : item.status === 'downloading' ? `Downloading · ${fmt(item.received || 0)}${item.total ? ` / ${fmt(item.total)}` : ''}` : 'Queued for background download';
-  app.innerHTML = `<section class="page-heading"><span class="eyebrow">Your library</span><h1>Downloads</h1><p>Private files saved in this browser only. Three downloads can run at once, including while this screen is in the background.</p></section>${items.length ? `<div class="download-list">${items.map((item, i) => `<div class="download-item" data-task="${esc(item.taskId || '')}"><div><b>${esc(item.name)}</b><small>${esc(status(item))} · ${new Date(item.date).toLocaleDateString()}</small></div><div class="actions">${item.status === 'done' ? `<button data-play="${i}" class="secondary">Play</button>` : ''}<button data-delete="${i}" class="ghost">Delete</button></div></div>`).join('')}</div><div id="download-player"></div>` : '<div class="notice">No private downloads yet.</div>'}`;
-  app.onclick = async (event) => {
-    const play = event.target.dataset.play, remove = event.target.dataset.delete;
-    if (play == null && remove == null) return;
-    if (play != null) {
-      const root = await navigator.storage.getDirectory();
-      const file = await (await root.getFileHandle(items[play].file)).getFile();
-      document.getElementById('download-player').innerHTML = `<video controls playsinline autoplay src="${URL.createObjectURL(new Blob([file], { type: items[play].type }))}"></video>`;
-    } else {
-      if (items[remove].file) { const root = await navigator.storage.getDirectory(); await root.removeEntry(items[remove].file).catch(() => {}); }
-      saveMetas(items.filter((_, index) => index !== Number(remove)));
-      downloadsPage();
+    const all = await dbAll();
+    dlTasks.clear();
+    (all || []).forEach((t) => dlTasks.set(t.taskId, t));
+    // one-time import of the old localStorage list (finished files only)
+    const legacy = JSON.parse(localStorage.getItem('free.downloads') || '[]');
+    for (const l of legacy) {
+      if (l.taskId && l.file && l.status === 'done' && !dlTasks.has(l.taskId)) {
+        const t = { ...l, groupId: l.taskId, groupName: l.name, id: null, received: l.size || 0, total: l.size || 0, pct: 100 };
+        dlTasks.set(t.taskId, t); await dbPut(t);
+      }
     }
-  };
+    if (legacy.length) localStorage.removeItem('free.downloads');
+  } catch { /* storage unavailable */ }
+  onTasksChanged();
+  syncDownloads();
 }
 
-addEventListener('message', (event) => {
-  if (event.data?.type !== 'DOWNLOAD_UPDATE') return;
-  const task = event.data.task;
-  const next = metas().map((item) => item.taskId === task.taskId ? { ...item, ...task, size: task.received || item.size || 0 } : item);
-  saveMetas(next);
-  const row = document.querySelector(`[data-task="${task.taskId}"]`);
-  if (row) {
-    const small = row.querySelector('small');
-    if (small) small.textContent = task.status === 'done' ? `${fmt(task.received || 0)} · Ready` : task.status === 'error' ? `Error · ${task.error || 'Download failed'}` : `${task.status === 'downloading' ? 'Downloading' : 'Queued'} · ${fmt(task.received || 0)}${task.total ? ` / ${fmt(task.total)}` : ''}`;
+async function queueDownloads({ id, data, items, resolution, out }) {
+  if (!navigator.storage?.getDirectory) { out.innerHTML = '<div class="notice error">This browser does not support private downloads.</div>'; return; }
+  if (!('serviceWorker' in navigator)) { out.innerHTML = '<div class="notice error">Background downloads are not supported by this browser.</div>'; return; }
+  await showAdGate('Watch this short ad before your download starts.');
+  const fresh = [];
+  let skipped = 0;
+  const base = Date.now();
+  for (const [index, item] of items.entries()) {
+    const key = item.key || null;
+    const dup = [...dlTasks.values()].find((t) => t.groupId === id && (t.episode || null) === key);
+    if (dup && dup.status !== 'error') { skipped += 1; continue; }
+    if (dup) { removed.add(dup.taskId); dlTasks.delete(dup.taskId); await dbDel(dup.taskId).catch(() => {}); await removeFile(dup.file); }
+    fresh.push({
+      taskId: uuid(), groupId: id, groupName: data.title, id, episode: key, epLabel: item.label || '',
+      name: key ? `${data.title} · ${shortEp(item.label || key)}` : data.title,
+      resolution: resolution || null, kind: 'file', file: null, received: 0, total: 0, pct: 0, size: 0,
+      date: base + index, status: 'queued', type: 'video/mp4', error: null,
+    });
   }
-  if ((task.status === 'done' || task.status === 'error') && location.hash === '#/downloads') downloadsPage();
-});
+  if (!fresh.length) { out.innerHTML = `<div class="notice">Nothing new to download — ${skipped} item${skipped === 1 ? ' is' : 's are'} already saved or queued. <a href="#/downloads">Open downloads →</a></div>`; return; }
+  for (const t of fresh) { dlTasks.set(t.taskId, t); await dbPut(t); }
+  onTasksChanged();
+  const ok = await swPost({ type: 'DOWNLOAD_BATCH', tasks: fresh });
+  out.innerHTML = ok
+    ? `<div class="notice success">Queued ${fresh.length} download${fresh.length > 1 ? 's' : ''}${skipped ? ` · ${skipped} already saved` : ''}. Up to three run together. <a href="#/downloads">Watch progress →</a></div>`
+    : '<div class="notice error">The background worker is not ready yet. Reload the page and try again.</div>';
+}
+
+const statusText = (t) => t.status === 'done' ? `Ready · ${fmt(t.size || t.received || 0)}`
+  : t.status === 'error' ? `Failed · ${t.error || 'Download failed'}`
+    : t.status === 'downloading' ? `Downloading · ${fmt(t.received || 0)}${t.total ? ` / ${fmt(t.total)}` : ''}`
+      : t.status === 'resolving' ? 'Preparing stream…' : 'Waiting in queue';
+const pctLabel = (t) => (t.status === 'done' ? '✓' : t.status === 'queued' ? '—' : t.status === 'resolving' ? '…' : t.status === 'error' ? '!' : `${pctOf(t)}%`);
+const rowButtons = (t) => t.status === 'done' ? `<button data-act="play" data-id="${esc(t.taskId)}" class="secondary">▶ Play</button><button data-act="delete" data-id="${esc(t.taskId)}" class="ghost">Delete</button>`
+  : t.status === 'error' ? `${t.id ? `<button data-act="retry" data-id="${esc(t.taskId)}" class="secondary">↻ Retry</button>` : ''}<button data-act="delete" data-id="${esc(t.taskId)}" class="ghost">Delete</button>`
+    : `<button data-act="cancel" data-id="${esc(t.taskId)}" class="ghost">Cancel</button>`;
+function rowHTML(t, grouped) {
+  const title = grouped && t.epLabel ? t.epLabel : t.name;
+  return `<div class="download-item dl-row" data-task="${esc(t.taskId)}" data-status="${esc(t.status)}"><div class="dl-main"><b>${esc(title)}</b><small class="dl-status">${esc(statusText(t))}</small>${t.status === 'done' ? '' : `<div class="progress"><i style="width:${pctOf(t)}%"></i></div>`}</div><span class="dl-pct">${pctLabel(t)}</span><div class="actions">${rowButtons(t)}</div></div>`;
+}
+function renderDownloadList() {
+  const list = document.getElementById('dl-list');
+  if (!list) return;
+  const all = [...dlTasks.values()];
+  if (!all.length) { list.innerHTML = '<div class="notice">No downloads yet. Open a title and tap Download — for series you can save an episode, a season or everything.</div>'; return; }
+  const groups = new Map();
+  for (const t of all) { const g = t.groupId || t.taskId; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(t); }
+  const ordered = [...groups.entries()].map(([gid, tasks]) => {
+    tasks.sort((a, b) => { const x = parseEp(a.episode), y = parseEp(b.episode); return x.s - y.s || x.e - y.e || a.date - b.date; });
+    return [gid, tasks, Math.max(...tasks.map((t) => t.date || 0))];
+  }).sort((a, b) => b[2] - a[2]);
+  list.innerHTML = ordered.map(([gid, tasks]) => {
+    const series = tasks.some((t) => t.episode);
+    if (!series) return tasks.map((t) => rowHTML(t, false)).join('');
+    return `<section class="dl-group" data-group="${esc(gid)}"><header class="dl-group-head"><div><b>${esc(tasks[0].groupName)}</b><small class="dl-g-sub"></small></div><span class="dl-g-pct"></span><div class="actions"><button data-act="group-delete" data-group="${esc(gid)}" class="ghost">Delete all</button></div></header><div class="progress"><i class="dl-g-bar"></i></div>${tasks.map((t) => rowHTML(t, true)).join('')}</section>`;
+  }).join('');
+  paintAll();
+}
+function paintAll() {
+  const list = document.getElementById('dl-list');
+  if (!list) return;
+  list.querySelectorAll('.dl-row').forEach((row) => {
+    const t = dlTasks.get(row.dataset.task);
+    if (!t) return;
+    row.querySelector('.dl-status').textContent = statusText(t);
+    row.querySelector('.dl-pct').textContent = pctLabel(t);
+    const bar = row.querySelector('.progress i'); if (bar) bar.style.width = `${pctOf(t)}%`;
+  });
+  list.querySelectorAll('.dl-group').forEach((g) => {
+    const tasks = [...dlTasks.values()].filter((t) => (t.groupId || t.taskId) === g.dataset.group);
+    if (!tasks.length) return;
+    const done = tasks.filter((t) => t.status === 'done').length;
+    const act = tasks.filter((t) => t.status === 'downloading' || t.status === 'resolving').length;
+    const waiting = tasks.filter((t) => t.status === 'queued').length;
+    const failed = tasks.filter((t) => t.status === 'error').length;
+    const pct = Math.round(tasks.reduce((a, t) => a + pctOf(t), 0) / tasks.length);
+    g.querySelector('.dl-g-sub').textContent = `${done} of ${tasks.length} episode${tasks.length > 1 ? 's' : ''} ready${act ? ` · ${act} downloading` : ''}${waiting ? ` · ${waiting} waiting` : ''}${failed ? ` · ${failed} failed` : ''}`;
+    g.querySelector('.dl-g-pct').textContent = `${pct}%`;
+    g.querySelector('.dl-g-bar').style.width = `${pct}%`;
+  });
+  paintSummary();
+}
+function renderSummary() {
+  const box = document.getElementById('dl-summary');
+  if (!box) return;
+  box.innerHTML = '<div class="dl-sum-top"><span class="dl-chip live"><b id="sum-act">0</b> downloading</span><span class="dl-chip"><b id="sum-q">0</b> queued</span><span class="dl-chip"><b id="sum-done">0</b> ready</span><span class="dl-chip bad" id="sum-bad-chip" hidden><b id="sum-bad">0</b> failed</span></div><div class="progress"><i id="sum-bar"></i></div><small id="sum-line"></small><div class="actions"><button class="secondary" data-act="retry-all" id="sum-retry" hidden>↻ Retry failed</button><button class="ghost" data-act="cancel-all" id="sum-cancel" hidden>Cancel all</button><button class="ghost" data-act="clear-done" id="sum-clear" hidden>Clear finished</button></div>';
+  navigator.storage?.estimate?.().then(({ usage, quota }) => { const el = document.getElementById('sum-line'); if (el) el.dataset.storage = quota ? `Storage ${fmt(usage)} of ${fmt(quota)}` : ''; paintSummary(); }).catch(() => {});
+}
+function paintSummary() {
+  const el = document.getElementById('sum-act');
+  if (!el) return;
+  const c = counts();
+  el.textContent = c.downloading;
+  document.getElementById('sum-q').textContent = c.queued;
+  document.getElementById('sum-done').textContent = c.done;
+  document.getElementById('sum-bad').textContent = c.error;
+  document.getElementById('sum-bad-chip').hidden = !c.error;
+  const active = [...dlTasks.values()].filter((t) => t.status === 'downloading' && t.total);
+  const rec = active.reduce((a, t) => a + (t.received || 0), 0), tot = active.reduce((a, t) => a + t.total, 0);
+  const pct = tot ? Math.floor((rec / tot) * 100) : 0;
+  document.getElementById('sum-bar').style.width = `${pct}%`;
+  const line = document.getElementById('sum-line');
+  line.textContent = [tot ? `Overall ${pct}% · ${fmt(rec)} of ${fmt(tot)}` : (c.downloading + c.queued ? 'Starting…' : 'Nothing downloading'), line.dataset.storage].filter(Boolean).join(' · ');
+  document.getElementById('sum-retry').hidden = !c.error;
+  document.getElementById('sum-cancel').hidden = !(c.downloading + c.queued);
+  document.getElementById('sum-clear').hidden = !c.done;
+}
+function onTasksChanged() {
+  paintBadge();
+  if (location.hash.startsWith('#/downloads')) renderDownloadList();
+  const m = /^#\/title\/(.+)$/.exec(location.hash);
+  if (m) paintEpisodeStates(decodeURIComponent(m[1]));
+}
+function onTaskUpdate(task, prevStatus) {
+  paintBadge();
+  const m = /^#\/title\/(.+)$/.exec(location.hash);
+  if (m) paintEpisodeStates(decodeURIComponent(m[1]));
+  if (!location.hash.startsWith('#/downloads')) return;
+  const row = document.querySelector(`.dl-row[data-task="${task.taskId}"]`);
+  if (!row || prevStatus !== task.status) renderDownloadList(); else paintAll();
+}
+
+async function removeTask(t, cancelling) {
+  removed.add(t.taskId);
+  if (cancelling || isActive(t.status)) await swPost({ type: 'CANCEL', taskId: t.taskId }).catch(() => {});
+  await removeFile(t.file);
+  dlTasks.delete(t.taskId);
+  await dbDel(t.taskId).catch(() => {});
+}
+async function retryTask(t) {
+  removed.delete(t.taskId);
+  const next = { ...t, status: 'queued', error: null };
+  dlTasks.set(t.taskId, next);
+  await dbPut(next);
+  await swPost({ type: 'DOWNLOAD', task: next });
+}
+async function playDownload(t) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const file = await (await root.getFileHandle(t.file)).getFile();
+    stopPlayer();
+    const host = document.getElementById('download-player');
+    const key = `free.pos.dl.${t.taskId}`;
+    activePlayer = mountPlayer(host, {
+      src: URL.createObjectURL(file.slice(0, file.size, t.type || 'video/mp4')), title: t.name, kind: 'local', probe: false,
+      info: { size: file.size, mime: t.type || 'video/mp4', ranges: true }, startAt: Number(localStorage.getItem(key) || 0),
+      onProgress: (x, d) => { try { if (Number.isFinite(d) && d - x < 60) localStorage.removeItem(key); else localStorage.setItem(key, String(Math.floor(x))); } catch { /* ignore */ } },
+    });
+    host.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch { alert('This file is no longer in browser storage. Download it again.'); }
+}
+async function downloadsClick(event) {
+  const b = event.target.closest('[data-act]');
+  if (!b) return;
+  const act = b.dataset.act, t = dlTasks.get(b.dataset.id);
+  if (act === 'play' && t) return playDownload(t);
+  if (act === 'cancel' && t) await removeTask(t, true);
+  else if (act === 'delete' && t) await removeTask(t, false);
+  else if (act === 'retry' && t) await retryTask(t);
+  else if (act === 'group-delete') {
+    const list = [...dlTasks.values()].filter((x) => (x.groupId || x.taskId) === b.dataset.group);
+    if (!confirm(`Delete ${list.length} download${list.length > 1 ? 's' : ''}?`)) return;
+    for (const x of list) await removeTask(x, false);
+  } else if (act === 'retry-all') { for (const x of [...dlTasks.values()].filter((y) => y.status === 'error' && y.id)) await retryTask(x); }
+  else if (act === 'cancel-all') { if (!confirm('Cancel every active download?')) return; for (const x of [...dlTasks.values()].filter((y) => isActive(y.status))) await removeTask(x, true); }
+  else if (act === 'clear-done') { for (const x of [...dlTasks.values()].filter((y) => y.status === 'done')) await removeTask(x, false); }
+  else return;
+  onTasksChanged();
+}
+function downloadsPage() {
+  app.innerHTML = '<section class="page-heading"><span class="eyebrow">Your library</span><h1>Downloads</h1><p>Private files saved in this browser only. Up to three download at once, even while you browse.</p></section><div class="dl-summary" id="dl-summary"></div><div id="dl-list" class="download-list"></div><div id="download-player" class="dl-player"></div>';
+  renderSummary();
+  renderDownloadList();
+  app.onclick = downloadsClick;
+}
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const d = event.data || {};
+    if (d.type === 'DOWNLOAD_UPDATE') {
+      const task = d.task;
+      if (removed.has(task.taskId)) return;
+      const prev = dlTasks.get(task.taskId)?.status;
+      dlTasks.set(task.taskId, task);
+      onTaskUpdate(task, prev);
+    } else if (d.type === 'DOWNLOAD_REMOVED') {
+      removed.add(d.taskId); dlTasks.delete(d.taskId); onTasksChanged();
+    }
+  });
+}
 
 function aboutPage() {
   app.innerHTML = `<section class="page-heading"><span class="eyebrow">The way you watch</span><h1>Stories, on your terms.</h1><p>A cinematic web app for browsing, streaming and saving titles for private offline playback.</p></section><div class="feature-grid"><div><b>Watch</b><span>Quality controls, subtitles and browser-native playback.</span></div><div><b>Save</b><span>Downloads stay inside your browser’s private storage.</span></div><div><b>Every screen</b><span>Designed for phones first, with desktop room to breathe.</span></div></div><div class="social-row"><a href="https://instagram.com/try_it_nah" target="_blank" rel="noreferrer">◎ Instagram · @try_it_nah</a><span id="whatsapp-link"></span></div>`;
@@ -321,6 +599,7 @@ async function adminPage() {
 
 function route() {
   app.onclick = null;
+  stopPlayer();
   const [segment, rawTail = ''] = location.hash.replace(/^#\//, '').split('/');
   if (segment === 'title') return titlePage(decodeURIComponent(rawTail));
   if (segment === 'watch') { const [rawId, query] = rawTail.split('?'); return watchPage(decodeURIComponent(rawId), new URLSearchParams(query).get('ep')); }
@@ -333,5 +612,8 @@ function route() {
 addEventListener('hashchange', route);
 route();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+loadDownloads();
+setInterval(syncDownloads, 20000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncDownloads(); });
 addEventListener('online', maybeRecommend);
 setTimeout(maybeRecommend, 2500);
