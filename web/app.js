@@ -296,14 +296,25 @@ function aboutPage() {
 }
 
 async function adminPage() {
-  app.innerHTML = `<section class="page-heading"><span class="eyebrow">Owner controls</span><h1>Ad controls</h1><p>Set one short ad that is shown to all visitors before downloads and after long playback sessions.</p></section><form id="ad-form" class="admin-form"><input id="admin-password" type="password" placeholder="Admin password" required><input id="ad-url" type="url" placeholder="https://your-domain.example/ad.mp4" required><label>Duration<select id="ad-duration"><option value="1">1 second</option><option value="3">3 seconds</option><option value="5" selected>5 seconds</option><option value="7">7 seconds</option><option value="9">9 seconds</option></select></label><button class="primary">Publish ad to everyone</button><div id="admin-status"></div></form>`;
-  document.getElementById('ad-form').onsubmit = async (event) => {
+  app.innerHTML = `<section class="page-heading"><span class="eyebrow">Private area</span><h1>Owner controls</h1><p>This area is hidden from normal navigation. Enter the owner password to manage the global ad.</p></section><form id="admin-login" class="admin-form"><input id="admin-password" type="password" placeholder="Owner password" required autocomplete="current-password"><button class="primary">Unlock owner controls</button><div id="admin-status"></div></form>`;
+  document.getElementById('admin-login').onsubmit = async (event) => {
     event.preventDefault();
     const status = document.getElementById('admin-status');
+    const password = document.getElementById('admin-password').value;
     try {
-      await api('/api/admin/ad', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-password': document.getElementById('admin-password').value }, body: JSON.stringify({ enabled: true, url: document.getElementById('ad-url').value, durationSeconds: Number(document.getElementById('ad-duration').value) }) });
-      adConfigPromise = Promise.resolve({ enabled: true, url: document.getElementById('ad-url').value, durationSeconds: Number(document.getElementById('ad-duration').value) });
-      status.innerHTML = '<div class="notice success">Ad published globally.</div>';
+      await api('/api/admin/check', { method: 'POST', headers: { 'x-admin-password': password } });
+      app.innerHTML = `<section class="page-heading"><span class="eyebrow">Owner controls</span><h1>Ad controls</h1><p>Only the verified owner can publish the global ad.</p></section><form id="ad-form" class="admin-form"><input id="ad-url" type="url" placeholder="https://your-domain.example/ad.mp4" required><label>Duration<select id="ad-duration"><option value="1">1 second</option><option value="3">3 seconds</option><option value="5" selected>5 seconds</option><option value="7">7 seconds</option><option value="9">9 seconds</option></select></label><button class="primary">Publish ad to everyone</button><div id="admin-status"></div></form>`;
+      document.getElementById('ad-form').onsubmit = async (publishEvent) => {
+        publishEvent.preventDefault();
+        const publishStatus = document.getElementById('admin-status');
+        try {
+          const url = document.getElementById('ad-url').value;
+          const durationSeconds = Number(document.getElementById('ad-duration').value);
+          await api('/api/admin/ad', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-password': password }, body: JSON.stringify({ enabled: true, url, durationSeconds }) });
+          adConfigPromise = Promise.resolve({ enabled: true, url, durationSeconds });
+          publishStatus.innerHTML = '<div class="notice success">Ad published globally.</div>';
+        } catch (error) { publishStatus.innerHTML = errBox(error); }
+      };
     } catch (error) { status.innerHTML = errBox(error); }
   };
 }

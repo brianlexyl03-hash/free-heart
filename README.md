@@ -22,6 +22,8 @@ Recommendations are opt-in and online-only. The browser keeps up to four recent 
 
 The static PWA shell is cacheable by a CDN/service worker, while `/api/*` and stream responses remain uncached and personalized. Set `SOCIAL_WHATSAPP_URL` in Render if a WhatsApp contact link is desired; Instagram is `@try_it_nah`.
 
+Owner controls are not linked in the public navigation. Direct access to `/#/admin` shows only a password prompt; the ad form is rendered only after `/api/admin/check` verifies the owner password, and publishing remains protected by the same server-side password.
+
 ## Local development
 
 For local development only, with Node >= 20, Rust >= 1.90, and network access:

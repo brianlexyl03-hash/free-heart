@@ -153,6 +153,13 @@ app.get('/api/ad-config', async () => ({
   durationSeconds: adConfig.durationSeconds,
 }));
 
+app.post('/api/admin/check', async (req, reply) => {
+  if (!ADMIN_PASSWORD || req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
+    return reply.code(401).send({ error: 'unauthorized', message: 'Owner password required' });
+  }
+  return { ok: true };
+});
+
 app.put('/api/admin/ad', async (req, reply) => {
   if (!ADMIN_PASSWORD || req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
     return reply.code(401).send({ error: 'unauthorized', message: 'Admin password required' });
