@@ -46,6 +46,10 @@ The player exposes every resolution returned by the live provider—for example 
 
 Downloads use a service-worker queue and Origin Private File System storage. Up to three file downloads run concurrently, progress is persisted locally, and returning to the PWA restores queued/downloading/completed states. The queue continues while the page is backgrounded or the user navigates within the app. Browser engines may suspend service workers when the browser is fully force-closed; no web app can guarantee work after an operating-system force-stop. HLS sources remain playable but cannot be saved as a single file.
 
+### VLC-style player controls
+
+The player includes volume and mute, visual brightness, Fit/Fill sizing, fullscreen, Picture-in-Picture, keyboard shortcuts (`Space`, `F`, and `M`), and Screen Wake Lock through the browser. Wake Lock prevents supported devices from dimming or locking while the user is watching; the operating system may still release it for battery or policy reasons. A website cannot change Android or iOS hardware brightness directly, so the brightness control adjusts the video’s visual brightness instead.
+
 ### Captions
 
 MovieBox captions come from the same resolved MovieBox resource and episode, including sibling audio/dub IDs when the upstream service provides them. The adapter keeps the raw subject ID separate from the provider-qualified web ID, deduplicates language tracks, preserves the original caption URLs behind short-lived tokens, and exposes browser-native language selection. It does not mix a subtitle from a different title or episode. Timing remains the source provider’s responsibility; the browser consumes the provider’s WebVTT/SRT track against the exact stream resource.

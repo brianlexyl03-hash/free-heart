@@ -184,7 +184,7 @@ async function titlePage(id) {
 
 function playerMarkup(id, episode, resolved) {
   const tracks = (resolved.subtitles || []).map((s, i) => `<track kind="subtitles" srclang="${subtitleCode(s.lang)}" label="${esc(s.label)}" src="${esc(s.src)}" ${i ? '' : 'default'}>`).join('');
-  return `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div class="video-shell"><video id="player" controls playsinline autoplay src="${esc(resolved.stream)}">${tracks}</video></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>Choose your quality</h2></div>${qualitySelect(resolved.resolutions, resolved.selectedResolution)}</div><div id="player-message" class="notice subtle">${resolved.kind === 'hls' ? 'HLS playback depends on browser support. Safari and many mobile browsers support it natively.' : 'Quality selection changes the upstream stream without exposing its URL.'}</div>`;
+  return `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="video-stage" class="video-shell"><video id="player" controls playsinline autoplay src="${esc(resolved.stream)}">${tracks}</video></div><div class="vlc-controls"><button id="mute" class="secondary" title="Mute">🔊</button><label class="range-control">Volume <input id="volume" type="range" min="0" max="1" step="0.01" value="1"></label><label class="range-control">Brightness <input id="brightness" type="range" min="60" max="140" step="1" value="100"></label><label class="range-control">Fit <select id="fit"><option value="contain">Fit</option><option value="cover">Fill</option></select></label><button id="fullscreen" class="secondary">⛶ Fullscreen</button><button id="pip" class="secondary">▣ PiP</button><button id="wake" class="secondary">☀ Keep awake</button></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>Choose your quality</h2></div>${qualitySelect(resolved.resolutions, resolved.selectedResolution)}</div><div id="player-message" class="notice subtle">${resolved.kind === 'hls' ? 'HLS playback depends on browser support. Safari and many mobile browsers support it natively.' : 'VLC-style controls are available below: volume, visual brightness, fit, fullscreen, PiP and keep-awake.'}</div>`;
 }
 
 async function watchPage(id, episode) {
@@ -193,7 +193,26 @@ async function watchPage(id, episode) {
     let resolved = await resolveStream(id, episode);
     app.innerHTML = playerMarkup(id, episode, resolved);
     const player = document.getElementById('player');
+    const stage = document.getElementById('video-stage');
     const message = document.getElementById('player-message');
+    let wakeLock = null;
+    const acquireWakeLock = async () => {
+      if (!('wakeLock' in navigator)) { message.textContent = 'Keep-awake is not supported by this browser.'; return; }
+      try { wakeLock = await navigator.wakeLock.request('screen'); document.getElementById('wake').textContent = '☀ Awake on'; wakeLock.addEventListener('release', () => { wakeLock = null; document.getElementById('wake').textContent = '☀ Keep awake'; }); }
+      catch { message.textContent = 'The browser blocked keep-awake; tap the button again while the player is active.'; }
+    };
+    document.getElementById('volume').oninput = (event) => { player.volume = Number(event.target.value); player.muted = player.volume === 0; document.getElementById('mute').textContent = player.muted ? '🔇' : '🔊'; };
+    document.getElementById('mute').onclick = () => { player.muted = !player.muted; document.getElementById('mute').textContent = player.muted ? '🔇' : '🔊'; };
+    document.getElementById('brightness').oninput = (event) => { player.style.filter = `brightness(${Number(event.target.value) / 100})`; };
+    document.getElementById('fit').onchange = (event) => { player.style.objectFit = event.target.value; };
+    document.getElementById('fullscreen').onclick = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await stage.requestFullscreen(); } catch { message.textContent = 'Fullscreen is not available in this browser.'; } };
+    document.getElementById('pip').onclick = async () => { try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else if (document.pictureInPictureEnabled) await player.requestPictureInPicture(); else throw new Error(); } catch { message.textContent = 'Picture-in-Picture is not available in this browser.'; } };
+    document.getElementById('wake').onclick = async () => { if (wakeLock) { await wakeLock.release(); wakeLock = null; localStorage.setItem('free.keepAwake', 'off'); document.getElementById('wake').textContent = '☀ Keep awake'; } else { await acquireWakeLock(); localStorage.setItem('free.keepAwake', wakeLock ? 'on' : 'off'); } };
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wakeLock === null && !player.paused) acquireWakeLock(); }, { once: false });
+    player.addEventListener('play', () => { if (localStorage.getItem('free.keepAwake') === 'on') acquireWakeLock(); });
+    player.addEventListener('pause', () => { if (wakeLock) wakeLock.release().catch(() => {}); });
+    player.addEventListener('ended', () => { if (wakeLock) wakeLock.release().catch(() => {}); });
+    document.addEventListener('keydown', (event) => { if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return; if (event.key === 'f') document.getElementById('fullscreen').click(); if (event.key === 'm') document.getElementById('mute').click(); if (event.key === ' ') { event.preventDefault(); player.paused ? player.play() : player.pause(); } }, { once: true });
     let adShown = false;
     document.getElementById('quality')?.addEventListener('change', async (event) => {
       const previous = player.currentTime;
