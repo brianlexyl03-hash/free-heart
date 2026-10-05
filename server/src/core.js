@@ -3,6 +3,9 @@ import { z } from 'zod';
 export class CoreUnavailable extends Error {
   constructor(msg = 'Media core is not connected') { super(msg); this.name = 'CoreUnavailable'; }
 }
+export class CoreClientError extends Error {
+  constructor(status, kind, msg) { super(msg); this.name = 'CoreClientError'; this.status = status; this.kind = kind; }
+}
 export class CoreBadResponse extends Error {
   constructor(msg = 'Media core returned an unexpected response') { super(msg); this.name = 'CoreBadResponse'; }
 }
@@ -33,12 +36,18 @@ async function call(path, opts = {}) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let r;
     try {
-      r = await fetch(BASE + path, { ...opts, signal: AbortSignal.timeout(30000) });
+      r = await fetch(BASE + path, { ...opts, signal: AbortSignal.timeout(25000) });
     } catch {
       lastError = new CoreUnavailable('Media core is unreachable');
     }
     if (r?.ok) return r.json().catch(() => { throw new CoreBadResponse(); });
-    if (r) lastError = new CoreBadResponse(`Media core error ${r.status}`);
+    if (r) {
+      if (r.status >= 400 && r.status < 500 && r.status !== 429) {
+        const b = await r.json().catch(() => ({}));
+        throw new CoreClientError(r.status, b.error || 'core_rejected', b.message || 'Request rejected');
+      }
+      lastError = new CoreBadResponse(`Media core error ${r.status}`);
+    }
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
   }
   throw lastError || new CoreBadResponse();

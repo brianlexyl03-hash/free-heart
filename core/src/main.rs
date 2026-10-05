@@ -343,7 +343,7 @@ fn allowed_headers(release: &Release) -> HashMap<String, String> {
         .flat_map(|mirror| mirror.headers.iter())
         .filter_map(|(name, value)| {
             let key = name.to_ascii_lowercase();
-            (key == "referer" || key == "user-agent" || key == "cookie")
+            (key == "referer" || key == "user-agent" || key == "cookie" || key == "origin")
                 .then(|| (key, value.clone()))
         })
         .collect()

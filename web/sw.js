@@ -1,4 +1,4 @@
-const V = 'free-shell-v3';
+const V = 'free-shell-v4';
 const SHELL = ['/', '/app.js', '/styles.css', '/manifest.webmanifest', '/icon.svg'];
 const DB_NAME = 'free-downloads-v1';
 const STORE = 'tasks';
@@ -43,21 +43,27 @@ async function runDownload(task) {
   try {
     if (task.kind !== 'file') throw new Error('This source is HLS and cannot be saved as one file. Use Play instead.');
     if (!navigator.storage?.getDirectory) throw new Error('Background private storage is not supported by this browser.');
-    const response = await fetch(task.stream, { credentials: 'same-origin' });
+    let response;
+    for (let i = 0; i < 4; i += 1) {
+      try { response = await fetch(task.stream, { credentials: 'same-origin' }); if (response.ok || response.status < 500) break; }
+      catch (e) { if (i === 3) throw e; }
+      await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+    }
+    if (!response) throw new Error('Could not reach the server. Try again.');
     if (!response.ok) throw new Error(`The source rejected the download (HTTP ${response.status}). Try another quality.`);
     const total = Number(response.headers.get('content-length')) || 0;
     const root = await navigator.storage.getDirectory();
     const file = `${task.taskId}.bin`;
     const writable = await (await root.getFileHandle(file, { create: true })).createWritable();
     const reader = response.body.getReader();
-    let received = 0;
+    let received = 0; let last = 0;
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         await writable.write(value);
         received += value.length;
-        await update({ status: 'downloading', file, received, total });
+        if (Date.now() - last > 700) { last = Date.now(); await update({ status: 'downloading', file, received, total }); }
       }
       await writable.close();
     } catch (error) {

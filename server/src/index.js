@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
-import { core, CoreUnavailable, CoreBadResponse } from './core.js';
+import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = Fastify({
@@ -30,6 +30,7 @@ app.addHook('onSend', async (_req, reply) => {
 app.setErrorHandler((err, req, reply) => {
   if (err instanceof ZodError) return reply.code(400).send({ error: 'bad_request', message: 'Invalid input' });
   if (err instanceof CoreUnavailable) return reply.code(503).send({ error: 'core_unavailable', message: err.message });
+  if (err instanceof CoreClientError) return reply.code(err.status).send({ error: err.kind, message: err.message });
   if (err instanceof CoreBadResponse) return reply.code(502).send({ error: 'core_bad_response', message: err.message });
   if (err.statusCode === 429) return reply.code(429).send({ error: 'rate_limited', message: 'Too many requests' });
   req.log.error({ name: err.name }, 'unhandled');
@@ -41,10 +42,10 @@ const Resolution = z.coerce.number().int().min(144).max(4320);
 
 // short-lived opaque tokens: real media URLs never reach the client or logs
 const tokens = new Map();
-const TTL = 10 * 60 * 1000;
+const TTL = 6 * 60 * 60 * 1000; // long enough for full movies; refreshed on every use
 setInterval(() => { const n = Date.now(); for (const [k, v] of tokens) if (v.exp < n) tokens.delete(k); }, 60000).unref();
 // Provider signing headers stay in the server-side token record; none are returned to the browser.
-const ALLOWED_HDRS = new Set(['referer', 'user-agent', 'cookie']);
+const ALLOWED_HDRS = new Set(['referer', 'user-agent', 'cookie', 'origin']);
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const UPSTREAM_REPO = 'mesamirh/MovieBox-TUI';
 const UPSTREAM_COMMIT = process.env.UPSTREAM_COMMIT || '';
@@ -173,10 +174,11 @@ app.put('/api/admin/ad', async (req, reply) => {
   return { enabled: adConfig.enabled, durationSeconds: adConfig.durationSeconds };
 });
 
-app.get('/api/stream/:token', async (req, reply) => {
+app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1 minute' } } }, async (req, reply) => {
   const { token } = z.object({ token: z.string().regex(/^[\w-]{20,40}$/) }).parse(req.params);
   const e = tokens.get(token);
   if (!e || e.exp < Date.now()) return reply.code(404).send({ error: 'expired', message: 'Stream link expired' });
+  e.exp = Date.now() + TTL;
 
   // Abort upstream only if the client really disconnects before we finish.
   // (req.raw 'close' fires right after a GET is read on Node 16+, which killed every stream -> 502.)
@@ -234,5 +236,12 @@ app.get('/api/stream/:token', async (req, reply) => {
 
 await app.register(fastifyStatic, { root: path.resolve(here, '../../web') });
 
+app.server.keepAliveTimeout = 120000;
+app.server.headersTimeout = 125000;
 const port = Number(process.env.PORT || 3000);
 await app.listen({ port, host: process.env.HOST || '0.0.0.0' });
+
+// Render free tier sleeps after ~15 min idle (cold start = 502). Ping ourselves to stay awake.
+if (process.env.RENDER_EXTERNAL_URL) {
+  setInterval(() => { fetch(`${process.env.RENDER_EXTERNAL_URL}/api/health`, { signal: AbortSignal.timeout(15000) }).catch(() => {}); }, 10 * 60 * 1000).unref();
+}
