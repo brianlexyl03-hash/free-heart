@@ -177,24 +177,59 @@ app.get('/api/stream/:token', async (req, reply) => {
   const { token } = z.object({ token: z.string().regex(/^[\w-]{20,40}$/) }).parse(req.params);
   const e = tokens.get(token);
   if (!e || e.exp < Date.now()) return reply.code(404).send({ error: 'expired', message: 'Stream link expired' });
+
+  // Abort upstream only if the client really disconnects before we finish.
+  // (req.raw 'close' fires right after a GET is read on Node 16+, which killed every stream -> 502.)
   const ac = new AbortController();
-  req.raw.on('close', () => ac.abort());
-  const timer = setTimeout(() => ac.abort(), 30000);
-  const headers = { ...e.headers };
+  reply.raw.on('close', () => { if (!reply.raw.writableFinished) ac.abort(); });
+
+  const headers = {
+    'user-agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36',
+    accept: '*/*',
+    'accept-encoding': 'identity',
+    connection: 'keep-alive',
+    ...e.headers,
+  };
   if (req.headers.range) headers.range = String(req.headers.range);
+
   let r;
-  try { r = await fetch(e.url, { headers, signal: ac.signal, redirect: 'follow' }); }
-  catch { return reply.code(502).send({ error: 'upstream_failed', message: 'The source could not be reached. Try another quality or try again later.' }); }
-  finally { clearTimeout(timer); }
-  reply.code(r.status);
-  if (!r.ok) {
-    return reply.send({ error: 'upstream_rejected', message: `The source rejected this request (HTTP ${r.status}). Try another quality or try again later.` });
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 3 && !ac.signal.aborted; attempt += 1) {
+    const timer = setTimeout(() => ac.abort(new Error('header-timeout')), 45000);
+    try {
+      r = await fetch(e.url, { headers, signal: ac.signal, redirect: 'follow' });
+      clearTimeout(timer);
+      if (r.ok || (r.status >= 400 && r.status < 500 && r.status !== 429 && r.status !== 408)) break;
+      lastStatus = r.status;
+      try { await r.body?.cancel(); } catch {}
+      r = undefined;
+    } catch {
+      clearTimeout(timer);
+      r = undefined;
+      if (ac.signal.aborted) break;
+    }
+    if (attempt < 2) await new Promise((res) => setTimeout(res, 600 * (attempt + 1)));
   }
-  for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+  if (!r) {
+    if (ac.signal.aborted && reply.raw.destroyed) return;
+    return reply.code(502).send({ error: 'upstream_failed', message: `The source could not be reached${lastStatus ? ` (HTTP ${lastStatus})` : ''}. Try another quality or try again.` });
+  }
+  if (!r.ok && r.status !== 416) {
+    try { await r.body?.cancel(); } catch {}
+    return reply.code(r.status).send({ error: 'upstream_rejected', message: `The source rejected this request (HTTP ${r.status}). Try another quality or try again later.` });
+  }
+
+  reply.code(r.status);
+  for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']) {
     const v = r.headers.get(h); if (v) reply.header(h, v);
   }
+  if (!r.headers.get('accept-ranges')) reply.header('accept-ranges', 'bytes');
   reply.header('cache-control', 'no-store');
-  return reply.send(Readable.fromWeb(r.body));
+  reply.header('x-accel-buffering', 'no');
+  if (!r.body) return reply.send();
+  const stream = Readable.fromWeb(r.body);
+  stream.on('error', () => { try { reply.raw.destroy(); } catch {} });
+  return reply.send(stream);
 });
 
 await app.register(fastifyStatic, { root: path.resolve(here, '../../web') });
