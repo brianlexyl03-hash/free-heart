@@ -1,5 +1,5 @@
-const V = 'free-shell-v5';
-const SHELL = ['/', '/app.js', '/player.js', '/styles.css', '/manifest.webmanifest', '/icon.svg'];
+const V = 'free-shell-v6';
+const SHELL = ['/', '/app.js', '/player.js', '/maturity.js', '/styles.css', '/manifest.webmanifest', '/icon.svg'];
 const DB_NAME = 'free-downloads-v1';
 const STORE = 'tasks';
 const MAX_ACTIVE = 3;

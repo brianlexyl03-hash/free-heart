@@ -1,4 +1,5 @@
 import { mountPlayer } from './player.js';
+import { info as matureInfo, confirmAccess, getMode, setMode, flag, unflag, markConfirmed } from './maturity.js';
 const app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n) => n > 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${(n / 1e6).toFixed(1)} MB`;
@@ -52,7 +53,7 @@ async function maybeRecommend() {
   if (state.recommendation === `${day}:${slot}`) return;
   try {
     const data = await api('/api/recommendations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seeds: tasteSeeds() }) });
-    const item = data.results?.[0];
+    const item = data.results?.find((r) => !matureInfo(r).mature);
     if (!item) return;
     saveNoticeState({ ...state, recommendation: `${day}:${slot}` });
     recommendationToast(item);
@@ -147,12 +148,21 @@ function subtitleCode(label) {
 }
 
 function renderCards(items, heading = '') {
-  if (!items?.length) return `<div class="notice">No titles found.</div>`;
-  return `${heading ? `<div class="row-heading"><h2>${esc(heading)}</h2><span>${items.length} titles</span></div>` : ''}<div class="poster-row">${items.map((item) => `<a class="poster-card" href="${titleUrl(item.id)}"><div class="poster-wrap">${item.poster ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(item.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}<span class="play-dot">▶</span></div><strong>${esc(item.title)}</strong><small>${esc(item.year || '')} ${esc(item.type || '')}</small></a>`).join('')}</div>`;
+  const all = items || [];
+  const hideMode = getMode() === 'hide';
+  const shown = hideMode ? all.filter((i) => !matureInfo(i).mature) : all;
+  const hidden = all.length - shown.length;
+  const note = hidden ? `<div class="notice subtle">${hidden} mature title${hidden > 1 ? 's are' : ' is'} hidden by your 18+ filter.</div>` : '';
+  if (!shown.length) return `<div class="notice">${hidden ? '' : 'No titles found.'}</div>${note}`;
+  const card = (item) => {
+    const m = matureInfo(item);
+    return `<a class="poster-card ${m.mature ? 'mature' : ''}" href="${titleUrl(item.id)}"><div class="poster-wrap">${item.poster ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(item.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}${m.mature ? '<span class="age-tag">18+</span>' : ''}<span class="play-dot">▶</span></div><strong>${esc(item.title)}</strong><small>${esc(item.year || '')} ${esc(item.type || '')}</small></a>`;
+  };
+  return `${heading ? `<div class="row-heading"><h2>${esc(heading)}</h2><span>${shown.length} titles</span></div>` : ''}<div class="poster-row">${shown.map(card).join('')}</div>${note}`;
 }
 
 async function home() {
-  app.innerHTML = `<section class="hero"><div class="hero-copy"><span class="eyebrow">Your next obsession</span><h1>Watch something<br><em>unforgettable.</em></h1><p>Search a world of cinema and series, then press play.</p><div class="search-shell"><span>⌕</span><input id="q" type="search" placeholder="Search movies, shows, anime…" autocomplete="off"></div><button id="notify-me" class="ghost notify-button">⌁ Notify me of picks</button></div></section><section id="results" class="content-section"><div class="row-heading"><h2>Find your next story</h2><span>Search to explore</span></div><div class="notice">Start typing a title above.</div></section>`;
+  app.innerHTML = `<section class="hero"><div class="hero-copy"><span class="eyebrow">Your next obsession</span><h1>Watch something<br><em>unforgettable.</em></h1><p>Search a world of cinema and series, then press play.</p><div class="search-shell"><span>⌕</span><input id="q" type="search" placeholder="Search movies, shows, anime…" autocomplete="off"></div><button id="notify-me" class="ghost notify-button">⌁ Notify me of picks</button><button id="mature-mode" class="ghost notify-button"></button></div></section><section id="results" class="content-section"><div class="row-heading"><h2>Find your next story</h2><span>Search to explore</span></div><div class="notice">Start typing a title above.</div></section>`;
   const input = document.getElementById('q');
   const results = document.getElementById('results');
   document.getElementById('notify-me').onclick = async (event) => { event.currentTarget.textContent = (await enableNotifications()) ? '✓ Picks enabled' : 'Notifications blocked'; };
@@ -165,6 +175,10 @@ async function home() {
     catch (error) { results.innerHTML = errBox(error); }
   }
   input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 350); });
+  const modeBtn = document.getElementById('mature-mode');
+  const paintMode = () => { modeBtn.textContent = getMode() === 'hide' ? '🔞 18+ titles: hidden' : '🔞 18+ titles: labelled'; };
+  paintMode();
+  modeBtn.onclick = () => { setMode(getMode() === 'hide' ? 'label' : 'hide'); paintMode(); if (input.value.trim()) search(); };
   input.focus();
   maybeRecommend();
   checkUpstreamUpdate();
@@ -196,14 +210,18 @@ async function titlePage(id) {
   app.innerHTML = '<div class="loading"><i></i><span>Loading title…</span></div>';
   try {
     const data = await api(`/api/title/${encodeURIComponent(id)}`);
-    rememberTaste(data.title);
+    const mi = matureInfo({ id, title: data.title, overview: data.overview });
+    if (mi.mature) {
+      const ok = await confirmAccess({ id, title: data.title, reasons: mi.reasons });
+      if (!ok) { location.hash = '#/'; return; }
+    } else rememberTaste(data.title);
     const episodes = data.episodes || [];
     const seasons = groupSeasons(episodes);
     const isSeries = episodes.length > 0;
     let season = [...seasons.keys()][0];
     let current = isSeries ? seasons.get(season)[0].key : null;
     const seasonSelect = seasons.size > 1 ? `<label class="episode-picker">Season<select id="season">${[...seasons.entries()].map(([n, l]) => `<option value="${n}">Season ${n} · ${l.length} ep</option>`).join('')}</select></label>` : '';
-    app.innerHTML = `<section class="detail-hero" style="--poster:url('${esc(data.poster || '')}')"><div class="detail-poster">${data.poster ? `<img src="${esc(data.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}</div><div class="detail-copy"><span class="eyebrow">${esc(data.type || 'Feature')}</span><h1>${esc(data.title)}</h1><div class="meta"><span>${esc(data.year || '')}</span><span>HD</span><span>16+</span>${isSeries ? `<span>${seasons.size} season${seasons.size > 1 ? 's' : ''} · ${episodes.length} episodes</span>` : ''}</div><p>${esc(data.overview || 'A new story is waiting for you.')}</p><div class="actions"><button id="play" class="primary">▶ Play</button><button id="download" class="secondary">⇩ Download</button></div><div id="title-status"></div></div></section>${isSeries ? `<section class="content-section"><div class="row-heading"><h2>Episodes</h2>${seasonSelect}</div><div id="episodes" class="ep-list"></div></section>` : ''}<section class="content-section"><div class="row-heading"><h2>More details</h2></div><div class="detail-facts"><span><b>Title</b>${esc(data.title)}</span><span><b>Format</b>${esc(data.type || 'Movie')}</span><span><b>Offline</b>Private browser storage</span></div></section>`;
+    app.innerHTML = `<section class="detail-hero" style="--poster:url('${esc(data.poster || '')}')"><div class="detail-poster">${data.poster ? `<img src="${esc(data.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}</div><div class="detail-copy"><span class="eyebrow">${esc(data.type || 'Feature')}</span><h1>${esc(data.title)}</h1><div class="meta"><span>${esc(data.year || '')}</span><span>HD</span>${mi.mature ? '<span class="age-chip">18+</span>' : '<span>Not rated</span>'}${isSeries ? `<span>${seasons.size} season${seasons.size > 1 ? 's' : ''} · ${episodes.length} episodes</span>` : ''}</div>${mi.mature ? `<div class="advisory"><b>18+</b><span>${esc(mi.reasons.join(' · '))}</span></div>` : ''}<p>${esc(data.overview || 'A new story is waiting for you.')}</p><button id="flag-18" class="linkish">${mi.mature ? 'Not 18+? Remove the label' : 'Mark this title as 18+'}</button><div class="actions"><button id="play" class="primary">▶ Play</button><button id="download" class="secondary">⇩ Download</button></div><div id="title-status"></div></div></section>${isSeries ? `<section class="content-section"><div class="row-heading"><h2>Episodes</h2>${seasonSelect}</div><div id="episodes" class="ep-list"></div></section>` : ''}<section class="content-section"><div class="row-heading"><h2>More details</h2></div><div class="detail-facts"><span><b>Title</b>${esc(data.title)}</span><span><b>Format</b>${esc(data.type || 'Movie')}</span><span><b>Offline</b>Private browser storage</span></div></section>`;
     const status = document.getElementById('title-status');
     const playBtn = document.getElementById('play');
     const watchHash = (ep) => `#/watch/${encodeURIComponent(id)}${ep ? `?ep=${encodeURIComponent(ep)}` : ''}`;
@@ -224,6 +242,7 @@ async function titlePage(id) {
     });
     document.getElementById('season')?.addEventListener('change', (event) => { season = Number(event.target.value); current = seasons.get(season)[0].key; paintPlay(); paintEpisodes(); });
     playBtn.onclick = () => { location.hash = watchHash(current); };
+    document.getElementById('flag-18').onclick = () => { if (mi.mature) unflag(id); else { flag(id); markConfirmed(id); } titlePage(id); };
     document.getElementById('download').onclick = () => openDownloadSheet({ id, data, seasons, season, current, out: status });
   } catch (error) { app.innerHTML = errBox(error); }
 }
@@ -270,6 +289,8 @@ async function watchPage(id, episode) {
   app.innerHTML = '<div class="loading"><i></i><span>Preparing your stream…</span></div>';
   try {
     const [first, meta] = await Promise.all([resolveStream(id, episode), api(`/api/title/${encodeURIComponent(id)}`).catch(() => null)]);
+    const wi = matureInfo({ id, title: meta?.title, overview: meta?.overview });
+    if (wi.mature && !(await confirmAccess({ id, title: meta?.title || 'This title', reasons: wi.reasons }))) { location.hash = '#/'; return; }
     let resolved = first;
     const epLabel = episode ? ((meta?.episodes || []).find((e) => e.key === episode)?.label || episode) : '';
     const title = meta ? `${meta.title}${epLabel ? ` · ${epLabel}` : ''}` : (epLabel || 'Now playing');
@@ -381,6 +402,8 @@ async function loadDownloads() {
 async function queueDownloads({ id, data, items, resolution, out }) {
   if (!navigator.storage?.getDirectory) { out.innerHTML = '<div class="notice error">This browser does not support private downloads.</div>'; return; }
   if (!('serviceWorker' in navigator)) { out.innerHTML = '<div class="notice error">Background downloads are not supported by this browser.</div>'; return; }
+  const di = matureInfo({ id, title: data.title, overview: data.overview });
+  if (di.mature && !(await confirmAccess({ id, title: data.title, reasons: di.reasons }))) return;
   await showAdGate('Watch this short ad before your download starts.');
   const fresh = [];
   let skipped = 0;
@@ -394,7 +417,7 @@ async function queueDownloads({ id, data, items, resolution, out }) {
       taskId: uuid(), groupId: id, groupName: data.title, id, episode: key, epLabel: item.label || '',
       name: key ? `${data.title} · ${shortEp(item.label || key)}` : data.title,
       resolution: resolution || null, kind: 'file', file: null, received: 0, total: 0, pct: 0, size: 0,
-      date: base + index, status: 'queued', type: 'video/mp4', error: null,
+      date: base + index, status: 'queued', type: 'video/mp4', error: null, mature: di.mature, reasons: di.reasons,
     });
   }
   if (!fresh.length) { out.innerHTML = `<div class="notice">Nothing new to download — ${skipped} item${skipped === 1 ? ' is' : 's are'} already saved or queued. <a href="#/downloads">Open downloads →</a></div>`; return; }
@@ -416,7 +439,7 @@ const rowButtons = (t) => t.status === 'done' ? `<button data-act="play" data-id
     : `<button data-act="cancel" data-id="${esc(t.taskId)}" class="ghost">Cancel</button>`;
 function rowHTML(t, grouped) {
   const title = grouped && t.epLabel ? t.epLabel : t.name;
-  return `<div class="download-item dl-row" data-task="${esc(t.taskId)}" data-status="${esc(t.status)}"><div class="dl-main"><b>${esc(title)}</b><small class="dl-status">${esc(statusText(t))}</small>${t.status === 'done' ? '' : `<div class="progress"><i style="width:${pctOf(t)}%"></i></div>`}</div><span class="dl-pct">${pctLabel(t)}</span><div class="actions">${rowButtons(t)}</div></div>`;
+  return `<div class="download-item dl-row" data-task="${esc(t.taskId)}" data-status="${esc(t.status)}"><div class="dl-main"><b>${t.mature ? '<span class="age-chip sm">18+</span> ' : ''}${esc(title)}</b><small class="dl-status">${esc(statusText(t))}</small>${t.status === 'done' ? '' : `<div class="progress"><i style="width:${pctOf(t)}%"></i></div>`}</div><span class="dl-pct">${pctLabel(t)}</span><div class="actions">${rowButtons(t)}</div></div>`;
 }
 function renderDownloadList() {
   const list = document.getElementById('dl-list');
@@ -432,7 +455,7 @@ function renderDownloadList() {
   list.innerHTML = ordered.map(([gid, tasks]) => {
     const series = tasks.some((t) => t.episode);
     if (!series) return tasks.map((t) => rowHTML(t, false)).join('');
-    return `<section class="dl-group" data-group="${esc(gid)}"><header class="dl-group-head"><div><b>${esc(tasks[0].groupName)}</b><small class="dl-g-sub"></small></div><span class="dl-g-pct"></span><div class="actions"><button data-act="group-delete" data-group="${esc(gid)}" class="ghost">Delete all</button></div></header><div class="progress"><i class="dl-g-bar"></i></div>${tasks.map((t) => rowHTML(t, true)).join('')}</section>`;
+    return `<section class="dl-group" data-group="${esc(gid)}"><header class="dl-group-head"><div><b>${tasks.some((x) => x.mature) ? '<span class="age-chip sm">18+</span> ' : ''}${esc(tasks[0].groupName)}</b><small class="dl-g-sub"></small></div><span class="dl-g-pct"></span><div class="actions"><button data-act="group-delete" data-group="${esc(gid)}" class="ghost">Delete all</button></div></header><div class="progress"><i class="dl-g-bar"></i></div>${tasks.map((t) => rowHTML(t, true)).join('')}</section>`;
   }).join('');
   paintAll();
 }
@@ -515,6 +538,7 @@ async function retryTask(t) {
   await swPost({ type: 'DOWNLOAD', task: next });
 }
 async function playDownload(t) {
+  if (t.mature && !(await confirmAccess({ id: t.groupId || t.taskId, title: t.groupName || t.name, reasons: t.reasons || [] }))) return;
   try {
     const root = await navigator.storage.getDirectory();
     const file = await (await root.getFileHandle(t.file)).getFile();
@@ -569,7 +593,7 @@ if ('serviceWorker' in navigator) {
 }
 
 function aboutPage() {
-  app.innerHTML = `<section class="page-heading"><span class="eyebrow">The way you watch</span><h1>Stories, on your terms.</h1><p>A cinematic web app for browsing, streaming and saving titles for private offline playback.</p></section><div class="feature-grid"><div><b>Watch</b><span>Quality controls, subtitles and browser-native playback.</span></div><div><b>Save</b><span>Downloads stay inside your browser’s private storage.</span></div><div><b>Every screen</b><span>Designed for phones first, with desktop room to breathe.</span></div></div><div class="social-row"><a href="https://instagram.com/try_it_nah" target="_blank" rel="noreferrer">◎ Instagram · @try_it_nah</a><span id="whatsapp-link"></span></div>`;
+  app.innerHTML = `<section class="page-heading"><span class="eyebrow">The way you watch</span><h1>Stories, on your terms.</h1><p>A cinematic web app for browsing, streaming and saving titles for private offline playback.</p></section><div class="feature-grid"><div><b>Watch</b><span>Quality controls, subtitles and browser-native playback.</span></div><div><b>Save</b><span>Downloads stay inside your browser’s private storage.</span></div><div><b>Every screen</b><span>Designed for phones first, with desktop room to breathe.</span></div><div><b>18+ labels</b><span>Titles that look mature get an 18+ tag and ask you to confirm first. Use the 18+ switch on the home screen to hide them completely.</span></div></div><div class="social-row"><a href="https://instagram.com/try_it_nah" target="_blank" rel="noreferrer">◎ Instagram · @try_it_nah</a><span id="whatsapp-link"></span></div>`;
   api('/api/social').then((social) => { if (social.whatsapp) document.getElementById('whatsapp-link').innerHTML = `<a href="${esc(social.whatsapp)}" target="_blank" rel="noreferrer">◉ WhatsApp</a>`; }).catch(() => {});
 }
 

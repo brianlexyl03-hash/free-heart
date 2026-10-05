@@ -94,3 +94,20 @@
 .dl-group-head{display:flex;align-items:center;gap:12px;padding:10px 0}.dl-group-head>div:first-child{flex:1;min-width:0}.dl-group-head small{display:block;color:var(--muted)}.dl-g-pct{font-weight:800;font-size:20px}.dl-group-head .actions{margin:0}
 .dl-player{margin:20px 28px}
 @media(max-width:620px){.dl-summary{margin:0 16px 16px;top:56px}.dl-player{margin:16px}.dl-row{flex-wrap:wrap}.dl-row .actions{width:100%}.download-item.dl-row{flex-direction:row}.dl-group{margin:12px 0}.ep-state{min-width:40px}}
+
+/* ===== 18+ labels and prior notice ===== */
+.age-tag{position:absolute;top:8px;left:8px;z-index:2;padding:2px 7px;border-radius:5px;background:var(--red);color:#fff;font-size:11px;font-weight:800;letter-spacing:.04em;box-shadow:0 2px 8px #0008}
+.poster-card.mature .poster-wrap img,.poster-card.mature .poster-placeholder{filter:blur(14px) brightness(.7);transform:scale(1.12)}
+.poster-card.mature .poster-wrap:after{content:"Mature";position:absolute;inset:auto 0 12px 0;text-align:center;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#fff;text-shadow:0 1px 6px #000}
+.age-chip{display:inline-block;padding:0 7px;border:1px solid #e8a5a9;border-radius:4px;color:#ffb3b8;font-weight:800;line-height:1.5}
+.age-chip.sm{font-size:11px;padding:0 5px;vertical-align:1px}
+.meta .age-chip:before{content:none!important;margin:0!important}
+.advisory{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0 4px;padding:10px 14px;border:1px solid #72252b;border-left:4px solid var(--red);border-radius:8px;background:#e5091414;color:#e8a5a9;font-size:13px}
+.advisory b{padding:1px 8px;border-radius:4px;background:var(--red);color:#fff}
+.linkish{display:block;margin:6px 0 0;padding:0;border:0;background:none;color:var(--muted);font-size:12px;text-decoration:underline}
+.age-gate{position:fixed;z-index:90;inset:0;display:grid;place-items:center;padding:20px;background:#000d;backdrop-filter:blur(10px)}
+.age-card{width:min(430px,100%);padding:26px 22px;text-align:center;background:#1a1a20;border:1px solid #ffffff26;border-radius:16px;box-shadow:0 24px 90px #000}
+.age-badge{display:inline-grid;place-items:center;width:64px;height:64px;margin-bottom:10px;border-radius:50%;background:var(--red);color:#fff;font-size:22px;font-weight:900}
+.age-card h3{margin:0 0 6px;font-size:23px}.age-title{font-weight:700;color:#fff!important;margin:6px 0}.age-card p{color:var(--muted);margin:6px 0}
+.age-card ul{display:inline-block;text-align:left;margin:8px 0;padding-left:20px;color:#e8a5a9}
+.age-small{font-size:12px}.age-actions{display:grid;gap:10px;margin-top:18px}.age-actions button{padding:13px 16px}
