@@ -16,6 +16,12 @@ Render supplies the public `PORT` automatically. The Fastify gateway binds to `0
 
 Set `ADMIN_PASSWORD`, `AD_URL` (an HTTPS MP4/WebM ad URL you control), and `AD_DURATION_SECONDS` from `1` to `9` as Render environment variables. Visitors receive the same enabled ad before downloads and after 50 minutes of playback. The **Owner controls** page is available at `/#/admin`; enter the password and ad URL to publish a new global ad without rebuilding the app. Keep the password only in Render Environment settings.
 
+### Recommendations and updates
+
+Recommendations are opt-in and online-only. The browser keeps up to four recent search/title seeds locally, then checks at most once in each morning, noon, evening, and night window. The server receives those short-lived seeds only to return matching search results; it does not store an account, watch profile, or notification history. Browser notifications require the visitor to tap **Notify me of picks**. The About page also checks the pinned `UPSTREAM_COMMIT` against the upstream MovieBox-TUI GitHub main branch once per day and shows one owner update notice when a newer commit is detected.
+
+The static PWA shell is cacheable by a CDN/service worker, while `/api/*` and stream responses remain uncached and personalized. Set `SOCIAL_WHATSAPP_URL` in Render if a WhatsApp contact link is desired; Instagram is `@try_it_nah`.
+
 ## Local development
 
 For local development only, with Node >= 20, Rust >= 1.90, and network access:
@@ -37,6 +43,8 @@ Then open `http://localhost:3000`.
 - Geo-unblocking, VPN behavior, proxy bypasses, and alternate scraping code paths are intentionally absent.
 
 The player exposes every resolution returned by the live provider—for example 4K/2160p, 1080p, 720p, 480p, or 360p—without inventing unavailable qualities for a title.
+
+Downloads use a service-worker queue and Origin Private File System storage. Up to three file downloads run concurrently, progress is persisted locally, and returning to the PWA restores queued/downloading/completed states. The queue continues while the page is backgrounded or the user navigates within the app. Browser engines may suspend service workers when the browser is fully force-closed; no web app can guarantee work after an operating-system force-stop. HLS sources remain playable but cannot be saved as a single file.
 
 ### Captions
 

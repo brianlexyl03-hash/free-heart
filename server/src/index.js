@@ -46,6 +46,9 @@ setInterval(() => { const n = Date.now(); for (const [k, v] of tokens) if (v.exp
 // Provider signing headers stay in the server-side token record; none are returned to the browser.
 const ALLOWED_HDRS = new Set(['referer', 'user-agent', 'cookie']);
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const UPSTREAM_REPO = 'mesamirh/MovieBox-TUI';
+const UPSTREAM_COMMIT = process.env.UPSTREAM_COMMIT || '';
+const SOCIAL_WHATSAPP_URL = process.env.SOCIAL_WHATSAPP_URL || '';
 let adConfig = {
   enabled: Boolean(process.env.AD_URL),
   url: process.env.AD_URL || '',
@@ -81,6 +84,54 @@ app.get('/api/search', async (req) => {
   const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
   return core.search(q, page);
 });
+
+// Recommendations use only short-lived, client-supplied taste seeds. No
+// watch history, identity, or notification profile is stored on the server.
+app.post('/api/recommendations', async (req) => {
+  const { seeds } = z.object({
+    seeds: z.array(z.string().trim().min(1).max(100)).max(4).default([]),
+  }).parse(req.body || {});
+  if (!seeds.length) return { results: [], reason: 'search-or-watch-a-title-first' };
+  const responses = await Promise.allSettled(seeds.map((seed) => core.search(seed, 1)));
+  const seen = new Set();
+  const results = [];
+  for (const response of responses) {
+    if (response.status !== 'fulfilled') continue;
+    for (const item of response.value.results || []) {
+      if (seen.has(item.id) || results.length >= 6) continue;
+      seen.add(item.id);
+      results.push(item);
+    }
+  }
+  return { results, generatedAt: new Date().toISOString() };
+});
+
+app.get('/api/upstream-status', async () => {
+  try {
+    const response = await fetch(`https://api.github.com/repos/${UPSTREAM_REPO}/commits/main`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'free-heart-upstream-check' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return { checked: false, updateAvailable: false };
+    const data = await response.json();
+    const latestCommit = typeof data.sha === 'string' ? data.sha : '';
+    return {
+      checked: Boolean(latestCommit),
+      repository: UPSTREAM_REPO,
+      pinnedCommit: UPSTREAM_COMMIT || null,
+      latestCommit: latestCommit || null,
+      updateAvailable: Boolean(UPSTREAM_COMMIT && latestCommit && latestCommit !== UPSTREAM_COMMIT),
+      message: data.commit?.message?.split('\n')[0] || null,
+    };
+  } catch {
+    return { checked: false, updateAvailable: false };
+  }
+});
+
+app.get('/api/social', async () => ({
+  instagram: 'https://instagram.com/try_it_nah',
+  whatsapp: SOCIAL_WHATSAPP_URL || null,
+}));
 
 app.get('/api/title/:id', async (req) => core.title(Id.parse(req.params.id)));
 
