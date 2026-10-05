@@ -73,20 +73,66 @@ async function checkUpstreamUpdate() {
   } catch { /* status checks are best effort */ }
 }
 
-async function api(path, options) {
-  const response = await fetch(path, options);
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(body.message || `Request failed (${response.status})`), { code: body.error, status: response.status });
-  return body;
+const HTTP_TEXT = {
+  401: 'This source needs a sign-in, so it cannot be opened right now.',
+  402: 'The source is asking for payment or a subscription for this item (HTTP 402). Try another title or quality.',
+  403: 'The source refused access (HTTP 403). Try another quality or try again later.',
+  404: 'Not found. It may have been removed from the source.',
+  408: 'The server took too long to answer. Try again.',
+  410: 'This link expired. Go back and try again.',
+  429: 'Too many requests. Wait a few seconds and try again.',
+  500: 'The server hit a problem. Try again in a moment.',
+  502: 'The server is waking up or the source is down (HTTP 502). Try again in a moment.',
+  503: 'The server is waking up or busy (HTTP 503). Try again in a moment.',
+  504: 'The server took too long to answer (HTTP 504). Try again.',
+};
+const PLATFORM_402 = 'HTTP 402 Payment Required came from the hosting service, not from the app. The account running free (Render or Vercel) is paused or over a plan limit. Open its dashboard, fix the billing or usage notice, then redeploy.';
+const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function httpMessage(status, serverMsg, fromPlatform) {
+  if (fromPlatform && status === 402) return PLATFORM_402;
+  if (serverMsg && !/^Request failed/i.test(serverMsg) && serverMsg !== 'Something went wrong') return serverMsg;
+  return HTTP_TEXT[status] || (status >= 500 ? HTTP_TEXT[500] : `Request failed (HTTP ${status}).`);
+}
+// GET requests (and the idempotent resolve call) retry on network errors and 408/425/429/5xx; 4xx answers are final.
+async function api(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const safe = method === 'GET' || path === '/api/resolve';
+  const tries = safe ? 4 : 1;
+  let last;
+  for (let i = 0; i < tries; i += 1) {
+    if (navigator.onLine === false) throw Object.assign(new Error('You are offline. Check your connection and try again.'), { code: 'offline' });
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 45000);
+    try {
+      const response = await fetch(path, { ...options, signal: options.signal || ac.signal });
+      clearTimeout(timer);
+      const text = await response.text();
+      let body = {}; let json = true;
+      try { body = text ? JSON.parse(text) : {}; } catch { json = false; }
+      if (response.ok) return json ? body : {};
+      const err = Object.assign(new Error(httpMessage(response.status, body.message, !json)), { code: body.error, status: response.status });
+      if (!safe || !RETRY_STATUS.has(response.status) || i === tries - 1) throw err;
+      last = err;
+      const ra = Number(response.headers.get('retry-after'));
+      await wait(ra > 0 && ra <= 10 ? ra * 1000 : 1200 * (i + 1));
+    } catch (e) {
+      clearTimeout(timer);
+      if (e.status || (e.name === 'AbortError' && options.signal?.aborted)) throw e;
+      last = Object.assign(new Error(e.name === 'AbortError' ? 'The server is taking too long to answer (it may be waking up). Try again.' : 'Could not reach the server. Check your connection and try again.'), { code: 'network' });
+      if (i === tries - 1) throw last;
+      await wait(1200 * (i + 1));
+    }
+  }
+  throw last;
 }
 
 function errBox(error) {
   const message = error.code === 'core_unavailable'
     ? 'Playback services are waking up. Try again in a moment.'
-    : error.code === 'upstream_rejected'
-      ? 'This source rejected the request. Choose another quality or try again later.'
-      : error.message;
-  return `<div class="notice error"><strong>Something went wrong</strong><span>${esc(message)}</span></div>`;
+    : error.message || 'This source rejected the request. Choose another quality or try again later.';
+  const title = error.status === 402 ? 'Payment required' : error.code === 'offline' ? 'You are offline' : 'Something went wrong';
+  return `<div class="notice error"><strong>${title}</strong><span>${esc(message)}</span></div>`;
 }
 
 const resolveStream = (id, episode, resolution) => api('/api/resolve', {

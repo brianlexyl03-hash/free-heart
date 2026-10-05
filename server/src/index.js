@@ -174,6 +174,15 @@ app.put('/api/admin/ad', async (req, reply) => {
   return { enabled: adConfig.enabled, durationSeconds: adConfig.durationSeconds };
 });
 
+function upstreamMessage(status) {
+  if (status === 401) return 'The source needs a sign-in for this file (HTTP 401). Try another quality or title.';
+  if (status === 402) return 'The source is asking for payment or a subscription for this file (HTTP 402). Try another quality or title.';
+  if (status === 403) return 'The source refused this request (HTTP 403). The link may be blocked or expired. Try another quality.';
+  if (status === 404) return 'The source no longer has this file (HTTP 404). Try another quality or title.';
+  if (status === 410) return 'This link expired (HTTP 410). Go back and press Play again.';
+  return `The source rejected this request (HTTP ${status}). Try another quality or try again later.`;
+}
+
 app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1 minute' } } }, async (req, reply) => {
   const { token } = z.object({ token: z.string().regex(/^[\w-]{20,40}$/) }).parse(req.params);
   const e = tokens.get(token);
@@ -218,7 +227,7 @@ app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1
   }
   if (!r.ok && r.status !== 416) {
     try { await r.body?.cancel(); } catch {}
-    return reply.code(r.status).send({ error: 'upstream_rejected', message: `The source rejected this request (HTTP ${r.status}). Try another quality or try again later.` });
+    return reply.code(r.status).send({ error: 'upstream_rejected', message: upstreamMessage(r.status) });
   }
 
   reply.code(r.status);

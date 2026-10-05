@@ -82,7 +82,8 @@ async function runDownload(task) {
   try {
     if (!navigator.storage?.getDirectory) throw new Error('Private storage is not supported by this browser.');
     await save({ status: 'resolving', error: null });
-    const resolved = await resolveStream(t, ac.signal);
+    let resolved = await resolveStream(t, ac.signal);
+    let reResolved = false;
     if (resolved.kind !== 'file') throw new Error('This source is a live/HLS stream and cannot be saved as one file. Use Play instead.');
     const root = await navigator.storage.getDirectory();
     const file = t.file || `${t.taskId}.bin`;
@@ -104,9 +105,16 @@ async function runDownload(task) {
         continue;
       }
       if (response.status === 416 && existing > 0) break; // everything is already on disk
+      if ([401, 403, 410].includes(response.status) && !reResolved) { // signed link expired: get a fresh one once
+        reResolved = true;
+        try { await response.body?.cancel(); } catch { /* ignore */ }
+        resolved = await resolveStream(t, ac.signal);
+        continue;
+      }
       if (!response.ok) {
         const b = await response.json().catch(() => ({}));
-        throw new Error(`${b.message || 'The source rejected the download'} (HTTP ${response.status}). Try another quality.`);
+        const base = b.message || (response.status === 402 ? 'The source is asking for payment or a subscription for this file (HTTP 402).' : `The source rejected the download (HTTP ${response.status}).`);
+        throw new Error(`${base}${/HTTP \d+/.test(base) ? '' : ` (HTTP ${response.status})`} Try another quality or title.`);
       }
       const partial = response.status === 206;
       if (existing > 0 && !partial) existing = 0; // server ignored Range: start over
