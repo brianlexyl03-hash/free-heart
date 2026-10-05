@@ -410,7 +410,7 @@ async fn resolve(
             state
                 .service
                 .get_ext_captions(
-                    &request.id,
+                    &subject_id,
                     resource_id,
                     &details.sibling_ids(),
                     season,

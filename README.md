@@ -38,6 +38,10 @@ Then open `http://localhost:3000`.
 
 The player exposes every resolution returned by the live provider—for example 4K/2160p, 1080p, 720p, 480p, or 360p—without inventing unavailable qualities for a title.
 
+### Captions
+
+MovieBox captions come from the same resolved MovieBox resource and episode, including sibling audio/dub IDs when the upstream service provides them. The adapter keeps the raw subject ID separate from the provider-qualified web ID, deduplicates language tracks, preserves the original caption URLs behind short-lived tokens, and exposes browser-native language selection. It does not mix a subtitle from a different title or episode. Timing remains the source provider’s responsibility; the browser consumes the provider’s WebVTT/SRT track against the exact stream resource.
+
 ## API contract
 
 The private sidecar exposes `/health`, `/search`, `/title/:id`, and `POST /resolve`. The public Fastify gateway exposes the corresponding `/api/*` routes and retains the existing short-lived stream proxy.

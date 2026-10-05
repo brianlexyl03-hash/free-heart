@@ -65,6 +65,18 @@ function qualitySelect(resolutions = [], selected) {
   return `<label class="quality">Quality<select id="quality">${labels}</select></label>`;
 }
 
+function subtitleCode(label) {
+  const value = String(label || '').toLowerCase();
+  if (value.includes('english') || value === 'en') return 'en';
+  if (value.includes('bangla') || value.includes('bengali')) return 'bn';
+  if (value.includes('hindi')) return 'hi';
+  if (value.includes('spanish')) return 'es';
+  if (value.includes('arabic')) return 'ar';
+  if (value.includes('french')) return 'fr';
+  if (value.includes('german')) return 'de';
+  return 'und';
+}
+
 function renderCards(items, heading = '') {
   if (!items?.length) return `<div class="notice">No titles found.</div>`;
   return `${heading ? `<div class="row-heading"><h2>${esc(heading)}</h2><span>${items.length} titles</span></div>` : ''}<div class="poster-row">${items.map((item) => `<a class="poster-card" href="${titleUrl(item.id)}"><div class="poster-wrap">${item.poster ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(item.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}<span class="play-dot">▶</span></div><strong>${esc(item.title)}</strong><small>${esc(item.year || '')} ${esc(item.type || '')}</small></a>`).join('')}</div>`;
@@ -99,7 +111,7 @@ async function titlePage(id) {
 }
 
 function playerMarkup(id, episode, resolved) {
-  const tracks = (resolved.subtitles || []).map((s, i) => `<track kind="subtitles" srclang="${esc(s.lang)}" label="${esc(s.label)}" src="${esc(s.src)}" ${i ? '' : 'default'}>`).join('');
+  const tracks = (resolved.subtitles || []).map((s, i) => `<track kind="subtitles" srclang="${subtitleCode(s.lang)}" label="${esc(s.label)}" src="${esc(s.src)}" ${i ? '' : 'default'}>`).join('');
   return `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div class="video-shell"><video id="player" controls playsinline autoplay src="${esc(resolved.stream)}">${tracks}</video></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>Choose your quality</h2></div>${qualitySelect(resolved.resolutions, resolved.selectedResolution)}</div><div id="player-message" class="notice subtle">${resolved.kind === 'hls' ? 'HLS playback depends on browser support. Safari and many mobile browsers support it natively.' : 'Quality selection changes the upstream stream without exposing its URL.'}</div>`;
 }
 
