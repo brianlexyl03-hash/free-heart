@@ -11,6 +11,7 @@ import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = Fastify({
   trustProxy: true,
+  maxParamLength: 400,
   logger: {
     level: process.env.LOG_LEVEL || 'info',
     // never log URLs/queries/tokens: only method + route pattern + status
@@ -28,7 +29,7 @@ app.addHook('onSend', async (_req, reply) => {
 });
 
 app.setErrorHandler((err, req, reply) => {
-  if (err instanceof ZodError) return reply.code(400).send({ error: 'bad_request', message: 'Invalid input' });
+  if (err instanceof ZodError) { const f = [...new Set((err.issues || []).map((i) => i.path.join('.')).filter(Boolean))].join(', '); req.log.warn({ fields: f }, 'validation failed'); return reply.code(400).send({ error: 'bad_request', message: `Invalid input${f ? ` (${f})` : ''}` }); }
   if (err instanceof CoreUnavailable) return reply.code(503).send({ error: 'core_unavailable', message: err.message });
   if (err instanceof CoreClientError) return reply.code(err.status).send({ error: err.kind, message: err.message });
   if (err instanceof CoreBadResponse) return reply.code(502).send({ error: 'core_bad_response', message: err.message });
@@ -37,7 +38,7 @@ app.setErrorHandler((err, req, reply) => {
   return reply.code(500).send({ error: 'internal', message: 'Something went wrong' });
 });
 
-const Id = z.string().regex(/^[\w.:-]{1,96}$/);
+const Id = z.string().regex(/^[\w.:/~%@+=,&()!*$\[\]-]{1,300}$/);
 const Resolution = z.coerce.number().int().min(144).max(4320);
 
 // short-lived opaque tokens: real media URLs never reach the client or logs
