@@ -38,6 +38,38 @@ const Resolved = z.object({
 }));
 const Health = z.object({ ok: z.boolean(), core: z.string() });
 
+function friendlyCore(status, detail) {
+  const d = String(detail || '');
+  if (/network connection failed/i.test(d)) return `The server could not reach the media source (${d.replace(/^network connection failed:?\s*/i, '') || 'network error'}).`;
+  if (/temporarily unavailable/i.test(d)) return `The media source is temporarily unavailable${d.includes(':') ? ` (${d.split(':').slice(1).join(':').trim()})` : ''}.`;
+  if (/failed to parse/i.test(d)) return 'The media source answered in a format the app could not read. It may have changed.';
+  return `Media core error ${status}${d ? `: ${d}` : ''}`;
+}
+
+// Short-lived cache: fewer hits on the source, one shared request for identical calls,
+// and (for search/title only) the last good answer is served if the source is failing.
+const cache = new Map();
+const inflight = new Map();
+async function cached(key, freshMs, staleMs, fn) {
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && now - hit.t < freshMs) return structuredClone(hit.v);
+  if (inflight.has(key)) return structuredClone(await inflight.get(key));
+  const p = (async () => {
+    try {
+      const v = await fn();
+      cache.set(key, { v, t: Date.now() });
+      if (cache.size > 400) cache.delete(cache.keys().next().value);
+      return v;
+    } catch (e) {
+      if (hit && staleMs && now - hit.t < staleMs) { console.error('[core] source failing, serving last good answer for', key.split('|')[0]); return hit.v; }
+      throw e;
+    } finally { inflight.delete(key); }
+  })();
+  inflight.set(key, p);
+  return structuredClone(await p);
+}
+
 const BASE = process.env.CORE_URL || 'http://127.0.0.1:7070';
 async function call(path, opts = {}) {
   let lastError;
@@ -54,7 +86,10 @@ async function call(path, opts = {}) {
         const b = await r.json().catch(() => ({}));
         throw new CoreClientError(r.status, b.error || 'core_rejected', b.message || 'Request rejected');
       }
-      lastError = new CoreBadResponse(`Media core error ${r.status}`);
+      const b = await r.json().catch(() => ({}));
+      const detail = String(b.message || '').replace(/\(?https?:\/\/[^\s)]+\)?:?/g, '<source>').slice(0, 180);
+      console.error('[core]', path.split('?')[0], r.status, b.error || '', detail);
+      lastError = new CoreBadResponse(friendlyCore(r.status, detail));
     }
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
   }
@@ -72,12 +107,12 @@ const parse = (schema, v) => {
 export const core = {
   enabled: () => Boolean(BASE),
   async health() { return parse(Health, await call('/health')); },
-  async search(q, page) { return parse(Search, await call(`/search?q=${encodeURIComponent(q)}&page=${page}`)); },
-  async title(id) { return parse(Title, await call(`/title/${encodeURIComponent(id)}`)); },
+  async search(q, page) { return cached(`search|${String(q).toLowerCase()}|${page}`, 300000, 43200000, async () => parse(Search, await call(`/search?q=${encodeURIComponent(q)}&page=${page}`))); },
+  async title(id) { return cached(`title|${id}`, 600000, 43200000, async () => parse(Title, await call(`/title/${encodeURIComponent(id)}`))); },
   async resolve(id, episode, resolution) {
-    return parse(Resolved, await call('/resolve', {
+    return cached(`resolve|${id}|${episode ?? ''}|${resolution ?? ''}`, 90000, 0, async () => parse(Resolved, await call('/resolve', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id, episode: episode ?? null, resolution: resolution ?? null }),
-    }));
+    })));
   },
 };
