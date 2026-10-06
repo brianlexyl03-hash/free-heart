@@ -91,6 +91,7 @@ async function runDownload(task) {
     let existing = (await handle.getFile()).size;
     let total = t.total || 0;
     let type = t.type || 'video/mp4';
+    let lastCt = '';
     await save({ status: 'downloading', file, received: existing, selectedResolution: resolved.selectedResolution || null });
     let attempts = 0;
     for (;;) {
@@ -122,7 +123,7 @@ async function runDownload(task) {
       const cr = response.headers.get('content-range');
       const len = Number(response.headers.get('content-length')) || 0;
       total = partial ? (Number((cr || '').split('/')[1]) || existing + len) : len;
-      { const ct = response.headers.get('content-type') || ''; if (/^video\//.test(ct)) type = ct; else if (!/^video\//.test(type)) type = 'video/mp4'; }
+      { const ct = response.headers.get('content-type') || ''; lastCt = ct; if (/^video\//.test(ct)) type = ct; else if (!/^video\//.test(type)) type = 'video/mp4'; }
       let writable = await handle.createWritable({ keepExistingData: existing > 0 });
       if (existing > 0) await writable.seek(existing); else await writable.truncate(0);
       const reader = response.body.getReader();
@@ -160,6 +161,11 @@ async function runDownload(task) {
       break;
     }
     const finalSize = (await handle.getFile()).size;
+    if (finalSize < 65536 || /^(text\/|application\/(json|xml))/.test(lastCt)) {
+      await root.removeEntry(file).catch(() => {});
+      t = { ...t, received: 0, total: 0 };
+      throw new Error(finalSize === 0 ? 'The source sent an empty file (0 bytes), so this title is not available from it right now.' : 'The source sent a web page or a tiny file instead of a video, so this title is not available from it right now.');
+    }
     await save({ status: 'done', received: finalSize, total: finalSize, size: finalSize, type, finishedAt: Date.now(), error: null });
     notifyDone(t);
   } catch (error) {

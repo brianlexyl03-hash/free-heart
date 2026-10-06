@@ -310,8 +310,39 @@ function openDownloadSheet({ id, data, seasons, season, current, out }) {
   const savedQ = localStorage.getItem('free.dlq') || '';
   const sheet = document.createElement('div');
   sheet.className = 'sheet-backdrop';
-  sheet.innerHTML = `<div class="sheet" role="dialog" aria-label="Download options"><div class="sheet-grab"></div><h3>Download</h3><p class="sheet-sub">${esc(data.title)}</p><label class="sheet-field">Quality<select id="dl-quality">${qs.map(([v, l]) => `<option value="${v}" ${v === savedQ ? 'selected' : ''}>${l}</option>`).join('')}</select></label>${options.map((o, i) => o.head ? `<div class="sheet-head">${esc(o.head)}</div>` : `<button class="sheet-opt" data-i="${i}"><b>${esc(o.t)}</b><small>${esc(o.s)}</small><span>⇩</span></button>`).join('')}<p class="sheet-foot" id="sheet-foot">Items already saved are skipped.</p><button class="ghost sheet-cancel">Cancel</button></div>`;
+  sheet.innerHTML = `<div class="sheet" role="dialog" aria-label="Download options"><div class="sheet-grab"></div><h3>Download</h3><p class="sheet-sub">${esc(data.title)}</p><div class="sheet-avail" id="sheet-avail" data-s="check">Checking availability…</div><label class="sheet-field">Quality<select id="dl-quality">${qs.map(([v, l]) => `<option value="${v}" ${v === savedQ ? 'selected' : ''}>${l}</option>`).join('')}</select></label>${options.map((o, i) => o.head ? `<div class="sheet-head">${esc(o.head)}</div>` : `<button class="sheet-opt" data-i="${i}"><b>${esc(o.t)}</b><small>${esc(o.s)}</small><span>⇩</span></button>`).join('')}<p class="sheet-foot" id="sheet-foot">Items already saved are skipped.</p><button class="ghost sheet-cancel">Cancel</button></div>`;
   document.body.appendChild(sheet);
+  const availEl = document.getElementById('sheet-avail');
+  const optBtns = () => sheet.querySelectorAll('.sheet-opt');
+  let checkSeq = 0;
+  async function checkAvail() {
+    const seq = ++checkSeq;
+    availEl.dataset.s = 'check'; availEl.textContent = 'Checking availability…';
+    optBtns().forEach((b) => { b.disabled = true; });
+    const quality = Number(document.getElementById('dl-quality').value) || undefined;
+    let ok = false; let msg = '';
+    try {
+      const r = await api('/api/resolve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, episode: isSeries ? cur.key : undefined, resolution: quality }) });
+      if (r.kind !== 'file') throw new Error('This source is a live stream. You can play it but not save it.');
+      const resp = await fetch(r.stream, { headers: { range: 'bytes=0-0' } });
+      if (!resp.ok) { const b = await resp.json().catch(() => ({})); throw new Error(b.message || `The source answered HTTP ${resp.status}.`); }
+      const ct = resp.headers.get('content-type') || '';
+      const cr = resp.headers.get('content-range') || '';
+      let size = Number(cr.split('/')[1]) || null;
+      if (size == null && resp.status === 200 && resp.headers.has('content-length')) size = Number(resp.headers.get('content-length'));
+      try { await resp.body?.cancel(); } catch { /* ignore */ }
+      if (/^(text\/|application\/json)/.test(ct)) throw new Error('The source returned a web page instead of a video.');
+      if (size != null && size < 65536) throw new Error('The source returned an empty or tiny file.');
+      ok = true; msg = `Available${r.selectedResolution ? ` · ${r.selectedResolution}p` : ''}${size ? ` · ${fmt(size)}` : ''}${isSeries ? ` (checked ${shortEp(cur.label)})` : ''}`;
+    } catch (e) { msg = e.message || 'Not available right now.'; }
+    if (seq !== checkSeq || !document.body.contains(sheet)) return;
+    availEl.dataset.s = ok ? 'ok' : 'bad';
+    availEl.textContent = ok ? `✓ ${msg}` : `✕ Not available — ${msg} (tap here to check again)`;
+    optBtns().forEach((b) => { b.disabled = !ok; });
+  }
+  availEl.onclick = () => { if (availEl.dataset.s === 'bad') checkAvail(); };
+  document.getElementById('dl-quality').addEventListener('change', checkAvail);
+  checkAvail();
   navigator.storage?.estimate?.().then(({ usage, quota }) => { const f = document.getElementById('sheet-foot'); if (f && quota) f.textContent = `Free space about ${fmt(Math.max(0, quota - usage))}. Items already saved are skipped.`; }).catch(() => {});
   const close = () => sheet.remove();
   sheet.addEventListener('click', (event) => {
@@ -431,6 +462,12 @@ async function loadDownloads() {
     const all = await dbAll();
     dlTasks.clear();
     (all || []).forEach((t) => dlTasks.set(t.taskId, t));
+    for (const t of [...dlTasks.values()]) { // old 0-byte "ready" rows are failures, not downloads
+      if (t.status === 'done' && (t.size || t.received || 0) < 65536) {
+        const bad = { ...t, status: 'error', error: 'The saved file is empty (0 bytes). Delete it and try again.' };
+        dlTasks.set(t.taskId, bad); await dbPut(bad);
+      }
+    }
     // one-time import of the old localStorage list (finished files only)
     const legacy = JSON.parse(localStorage.getItem('free.downloads') || '[]');
     for (const l of legacy) {
@@ -673,6 +710,7 @@ async function adminPage() {
 function route() {
   app.onclick = null;
   stopPlayer();
+  document.querySelector('.sheet-backdrop')?.remove();
   const [segment, rawTail = ''] = location.hash.replace(/^#\//, '').split('/');
   if (segment === 'title') return titlePage(decodeURIComponent(rawTail));
   if (segment === 'watch') { const [rawId, query] = rawTail.split('?'); return watchPage(decodeURIComponent(rawId), new URLSearchParams(query).get('ep')); }
