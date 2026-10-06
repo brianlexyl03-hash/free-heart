@@ -1,24 +1,24 @@
 #!/bin/sh
-set -eu
+# Start the web server immediately and keep the Rust core alive in the background.
+# (Old version waited only ~15 s for the core and then killed the whole container -> Render showed 502.)
+set -u
 
+APP_DIR=${APP_DIR:-/app}
 CORE_BIND=${CORE_BIND:-127.0.0.1:7070}
+export CORE_BIND
 export CORE_URL=${CORE_URL:-http://$CORE_BIND}
 export HOST=${HOST:-0.0.0.0}
 export PORT=${PORT:-3000}
+# keep Node small so core + node fit in the free plan's 512 MB
+export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=${NODE_HEAP_MB:-190}"
 
-/app/core/free-core >"${TMPDIR:-/tmp}/free-core.log" 2>&1 &
-CORE_PID=$!
-cleanup() { kill "$CORE_PID" 2>/dev/null || true; wait "$CORE_PID" 2>/dev/null || true; }
-trap cleanup INT TERM EXIT
+(
+  while true; do
+    "$APP_DIR/core/free-core" 2>&1 | sed -u 's/^/[core] /'
+    echo "[start] free-core stopped, restarting in 2s" >&2
+    sleep 2
+  done
+) &
 
-for _ in $(seq 1 60); do
-  if curl -fsS "$CORE_URL/health" >/dev/null 2>&1; then
-    cd /app/server
-    exec node src/index.js
-  fi
-  sleep 0.25
-done
-
-cat "${TMPDIR:-/tmp}/free-core.log" >&2 || true
-echo "free-core did not become ready" >&2
-exit 1
+cd "$APP_DIR/server"
+exec node src/index.js

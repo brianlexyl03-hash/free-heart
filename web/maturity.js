@@ -3,19 +3,19 @@
 // STRICT MODE: Adult content is ALWAYS detected and ALWAYS requires confirmation before access.
 
 const SEXUAL = [
-  /\b(porn\w*|xxx|hentai|erotic\w*|softcore|nudity|nude|naked|orgy|orgies|sex|sexual\w*|sexy|stripper\w*|striptease|fetish\w*|bdsm|milf|onlyfans|playboy|kamasutra|lust|seduc\w*|uncens\w*|adult|18\+)\b/i,
+  /\b(porn\w*|xxx|hentai|erotic\w*|softcore|nudity|nude|naked|orgy|orgies|sex|sexual\w*|sexy|stripper\w*|striptease|fetish\w*|bdsm|milf|onlyfans|playboy|kamasutra|lust|seduc\w*|uncens\w*)\b/i,
+  /\b(adult (film|films|video|videos|movie|movies|only)|adults only)\b/i,
+  /(^|\s)18\+/,
   /\b(adult content|explicit|mature content|x-rated|rated r|nc-17)\b/i,
   /\b(escort|prostitut\w*|brothel|call girl|sex worker)\b/i,
   /\b(intercourse|copulat\w*|penetrat\w*|arousal|climax|fornication)\b/i,
-  /\b(lesbian|gay|transgender|lgbtq\+|sexual orient|sexual identity)\b/i,
-  /\b(breast|nipple|genitalia|genitals|vulva|penis|testicle)\b/i,
+  /\b(nipple|genitalia|genitals|vulva|penis|testicle)\b/i,
 ];
 
 const VIOLENT = [
   /\b(gore|gory|slasher|torture|massacre|bloodbath|cannibal\w*|mutilat\w*)\b/i,
   /\bgraphic violence\b/i,
-  /\b(extreme violence|brutal|slaughter|dismember\w*|decapitat\w*)\b/i,
-  /\b(kill|murder|assassin\w*|homicid\w*)\b/i,
+  /\b(extreme violence|slaughter|dismember\w*|decapitat\w*)\b/i,
 ];
 
 const K_MODE = 'free.mature.mode';
@@ -230,7 +230,6 @@ export function initialAgeGate() {
     
     const onKey = (e) => {
       if (e.key === 'Escape') return;
-      if (e.key === 'Enter') done(true);
     };
     
     document.addEventListener('keydown', onKey);
@@ -350,7 +349,6 @@ export function confirmAccess({ id, title, reasons = [], poster = null }) {
     
     const onKey = (e) => {
       if (e.key === 'Escape') done(false);
-      if (e.key === 'Enter') done(true);
     };
     
     document.addEventListener('keydown', onKey);
