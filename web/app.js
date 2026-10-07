@@ -25,10 +25,20 @@ function saveNoticeState(value) {
 }
 
 async function enableNotifications() {
-  if (!('Notification' in window)) return false;
-  const permission = await Notification.requestPermission();
-  localStorage.setItem('free.notifications', permission === 'granted' ? 'on' : 'off');
-  return permission === 'granted';
+  try {
+    if (window.FreeHeartPush?.enablePush) {
+      await window.FreeHeartPush.enablePush();
+      localStorage.setItem('free.notifications', 'on');
+      return true;
+    }
+    if (!('Notification' in window)) return false;
+    const permission = await Notification.requestPermission();
+    localStorage.setItem('free.notifications', permission === 'granted' ? 'on' : 'off');
+    return permission === 'granted';
+  } catch (error) {
+    console.error('Push notification setup failed:', error);
+    return false;
+  }
 }
 
 function recommendationToast(item, prefix = 'Because you watched') {
