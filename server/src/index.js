@@ -24,7 +24,78 @@ const app = Fastify({
 });
 
 await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+
 registerPushRoutes(app);
+
+async function startAutomaticPushRecommendations() {
+  try {
+    const { sendToAll } = await import('../push-notifications.js');
+    const { chooseRecommendation, randomDelayMs } = await import('../push-scheduler.js');
+
+    const recent = [];
+
+    const scheduleNext = async () => {
+      const delay = randomDelayMs();
+
+      setTimeout(async () => {
+        try {
+          // Use the existing media core to obtain live candidates.
+          // No movie title is stored or hard-coded here.
+          const queries = ['trending', 'popular', 'latest movies'];
+          const responses = await Promise.allSettled(
+            queries.map(q => core.search(q, 1))
+          );
+
+          const candidates = [];
+          const seen = new Set();
+
+          for (const r of responses) {
+            if (r.status !== 'fulfilled') continue;
+            for (const item of (r.value?.results || [])) {
+              if (!item?.id || !item?.title) continue;
+              const id = String(item.id);
+              if (seen.has(id)) continue;
+              seen.add(id);
+              candidates.push(item);
+            }
+          }
+
+          const pick = chooseRecommendation(candidates, recent);
+
+          if (pick) {
+            const poster =
+              pick.movie.poster ||
+              pick.movie.image ||
+              pick.movie.posterUrl ||
+              pick.movie.backdrop ||
+              undefined;
+
+            await sendToAll({
+              title: pick.title,
+              body: pick.body,
+              url: pick.url,
+              image: poster,
+              tag: `free-heart-${pick.movie.id}`
+            });
+
+            recent.push(String(pick.movie.id));
+            while (recent.length > 20) recent.shift();
+          }
+        } catch (error) {
+          app.log.error({ err: error }, 'Automatic recommendation push failed');
+        } finally {
+          scheduleNext();
+        }
+      }, delay);
+    };
+
+    scheduleNext();
+    app.log.info('Automatic recommendation push scheduler started');
+  } catch (error) {
+    app.log.error({ err: error }, 'Could not start recommendation push scheduler');
+  }
+}
+
 app.addHook('onSend', async (_req, reply) => {
   reply.header('x-content-type-options', 'nosniff');
   reply.header('referrer-policy', 'no-referrer');
@@ -252,6 +323,8 @@ app.server.keepAliveTimeout = 120000;
 app.server.headersTimeout = 125000;
 const port = Number(process.env.PORT || 3000);
 await app.listen({ port, host: process.env.HOST || '0.0.0.0' });
+
+startAutomaticPushRecommendations();
 
 // Render free tier sleeps after ~15 min idle (cold start = 502). Ping ourselves to stay awake.
 if (process.env.RENDER_EXTERNAL_URL) {
