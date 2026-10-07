@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.js';
-import { registerPushRoutes } from '../push-notifications.js';
+import { registerPushRoutes } from './push-notifications.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = Fastify({
