@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.js';
 import { registerPushRoutes } from './push-notifications.js';
+import { startAutomaticPush } from './auto-push.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = Fastify({
@@ -322,9 +323,10 @@ await app.register(fastifyStatic, { root: path.resolve(here, '../../web') });
 app.server.keepAliveTimeout = 120000;
 app.server.headersTimeout = 125000;
 const port = Number(process.env.PORT || 3000);
+startAutomaticPush();
+
 await app.listen({ port, host: process.env.HOST || '0.0.0.0' });
 
-startAutomaticPushRecommendations();
 
 // Render free tier sleeps after ~15 min idle (cold start = 502). Ping ourselves to stay awake.
 if (process.env.RENDER_EXTERNAL_URL) {
