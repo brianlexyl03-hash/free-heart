@@ -5,8 +5,8 @@
 // Required env: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT
 // Optional: PUSH_DB_FILE (default ./data/push-subscriptions.json)
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
 import webpush from 'web-push';
 
 const DB = process.env.PUSH_DB_FILE || path.join(process.cwd(), 'data', 'push-subscriptions.json');
@@ -76,4 +76,4 @@ async function sendToAll({ title, body, url, image, tag }) {
   return { ok: true, sent, failed, removed };
 }
 
-module.exports = { registerPushRoutes, sendToAll };
+
