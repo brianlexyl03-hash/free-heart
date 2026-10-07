@@ -58,7 +58,7 @@ export function registerPushRoutes(fastify) {
   });
 }
 
-async function sendToAll({ title, body, url, image, tag }) {
+export async function sendToAll({ title, body, url, image, tag }) {
   const items = read();
   let sent = 0, removed = 0, failed = 0;
   for (const item of items) {
