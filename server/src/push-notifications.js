@@ -7,7 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const webpush = require('web-push');
+import webpush from 'web-push';
 
 const DB = process.env.PUSH_DB_FILE || path.join(process.cwd(), 'data', 'push-subscriptions.json');
 const PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
@@ -26,7 +26,7 @@ function write(items) {
   fs.writeFileSync(DB, JSON.stringify(items, null, 2));
 }
 
-function registerPushRoutes(fastify) {
+export function registerPushRoutes(fastify) {
   assertConfig();
   fastify.get('/api/push/public-key', async () => ({ publicKey: PUBLIC_KEY }));
 
