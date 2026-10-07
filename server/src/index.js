@@ -29,7 +29,7 @@ registerPushRoutes(app);
 
 async function startAutomaticPushRecommendations() {
   try {
-    const { sendToAll } = await import('../push-notifications.js');
+    const { sendToAll } = await import('./push-notifications.js');
     const { chooseRecommendation, randomDelayMs } = await import('../push-scheduler.js');
 
     const recent = [];
