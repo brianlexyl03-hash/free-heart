@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MovieBox Web</title>
+  <style>
+    :root{color-scheme:dark}
+    body{font-family:system-ui;background:#0b0d10;color:#fff;margin:0}
+    main{max-width:900px;margin:auto;padding:24px}
+    input,textarea,button{font:inherit;padding:12px;border-radius:10px;border:1px solid #333;background:#151922;color:#fff;box-sizing:border-box}
+    input,textarea{width:100%}
+    textarea{min-height:150px;resize:vertical}
+    button{cursor:pointer;background:#1f7a4d;border:0;font-weight:700}
+    button.secondary{background:#252b36}
+    .card{background:#12161d;padding:18px;border-radius:16px;margin:14px 0}
+    .row{display:flex;gap:10px;align-items:center}
+    .stack{display:grid;gap:10px}
+    video{width:100%;max-height:70vh;border-radius:14px;background:#000}
+    pre{white-space:pre-wrap;word-break:break-word}
+    small{color:#9ca3af}
+    .ok{color:#7ee2a8}.bad{color:#ff8f8f}
+  </style>
+</head>
+<body>
+<main>
+  <h1>MovieBox Web</h1>
+
+  <div class="card stack">
+    <strong>Stream sources</strong>
+    <small>
+      One JSON object per source. Headers are kept server-side so the browser
+      does not need to send provider User-Agent, Referer, Cookie, or Authorization.
+    </small>
+
+    <textarea id="sources" spellcheck="false">[
+  {
+    "url": "https://example.com/video.mp4",
+    "quality": "1080p",
+    "headers": {
+      "User-Agent": "Mozilla/5.0",
+      "Referer": "https://example.com/"
+    }
+  }
+]</textarea>
+
+    <div class="row">
+      <button onclick="resolveAndPlay()">Resolve &amp; Play</button>
+      <button class="secondary" onclick="checkHealth()">Health</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <video id="player" controls playsinline preload="metadata"></video>
+  </div>
+
+  <div id="status" class="card">Ready.</div>
+</main>
+
+<script>
+const player = document.getElementById('player');
+const statusBox = document.getElementById('status');
+let activeSources = [];
+let recoveryInFlight = false;
+let recoveryCount = 0;
+
+function setStatus(text, good = true) {
+  statusBox.innerHTML = '<pre class="' + (good ? 'ok' : 'bad') + '">' +
+    escapeHtml(text) + '</pre>';
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;');
+}
+
+async function resolveStreamSources(sources, resumeAt = 0) {
+  const response = await fetch('/api/streams/resolve', {
+    method: 'POST',
+    headers: {'content-type':'application/json'},
+    body: JSON.stringify({sources})
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(JSON.stringify(data, null, 2));
+
+  const restorePosition = () => {
+    if (!resumeAt || !Number.isFinite(resumeAt)) return;
+    try { player.currentTime = resumeAt; } catch {}
+    player.removeEventListener('loadedmetadata', restorePosition);
+  };
+
+  player.addEventListener('loadedmetadata', restorePosition);
+  player.src = data.stream.url;
+  player.load();
+  return data;
+}
+
+async function resolveAndPlay() {
+  try {
+    const sources = JSON.parse(document.getElementById('sources').value);
+
+    if (!Array.isArray(sources) || sources.length === 0) {
+      throw new Error('sources must be a non-empty JSON array');
+    }
+
+    activeSources = sources;
+    recoveryCount = 0;
+    setStatus('Selecting a byte-range-seekable source…');
+
+    const data = await resolveStreamSources(sources);
+
+    try { await player.play(); } catch {}
+
+    setStatus(
+      'Resolved ' + (data.stream.quality || 'source') +
+      '\n' + data.stream.url
+    );
+  } catch (error) {
+    setStatus(error.stack || String(error), false);
+  }
+}
+
+player.addEventListener('error', async () => {
+  if (recoveryInFlight || !activeSources.length || recoveryCount >= 2) return;
+
+  const resumeAt = Number.isFinite(player.currentTime) ? player.currentTime : 0;
+  recoveryInFlight = true;
+  recoveryCount += 1;
+
+  try {
+    setStatus(
+      'Playback source failed; selecting another source and restoring ' +
+      resumeAt.toFixed(2) + 's…'
+    );
+
+    const data = await resolveStreamSources(activeSources, resumeAt);
+    try { await player.play(); } catch {}
+
+    setStatus(
+      'Recovered at ' + resumeAt.toFixed(2) + 's · ' +
+      (data.stream.quality || 'source')
+    );
+  } catch (error) {
+    setStatus(error.stack || String(error), false);
+  } finally {
+    recoveryInFlight = false;
+  }
+});
+
+async function checkHealth() {
+  try {
+    const response = await fetch('/api/health');
+    setStatus(JSON.stringify(await response.json(), null, 2), response.ok);
+  } catch (error) {
+    setStatus(String(error), false);
+  }
+}
+</script>
+</body>
+</html>

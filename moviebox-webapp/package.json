@@ -1,0 +1,14 @@
+{
+  "name": "moviebox-web-stream-relay",
+  "version": "0.2.1",
+  "private": true,
+  "description": "Range-preserving authenticated media relay for a MovieBox-style web player",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node test/smoke.test.js"
+  },
+  "engines": {
+    "node": ">=18.18"
+  }
+}
