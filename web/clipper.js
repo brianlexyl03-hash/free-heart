@@ -1,0 +1,78 @@
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clamp = (v, min, max) => Math.min(max, Math.max(min, Number(v) || 0));
+const fmt = (s) => { s = Math.max(0, Math.floor(Number(s) || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+
+function recorderMime() {
+  return ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find((x) => MediaRecorder.isTypeSupported?.(x)) || '';
+}
+
+function suggestion(title, caption) {
+  const clean = String(title || 'this scene').replace(/[\n#]+/g, ' ').trim();
+  return caption || `The moment from ${clean} that stays with you. Watch the full story on free. #shorts #reels #fyp`;
+}
+
+export function mountClipEditor(host, { video, title = 'Untitled clip', onStatus } = {}) {
+  if (!host || !video) return null;
+  const max = Number.isFinite(video.duration) ? Math.min(60, Math.max(1, video.duration)) : 60;
+  const initialEnd = Math.min(max, Math.max(1, (video.currentTime || 0) + 15));
+  host.innerHTML = `<section class="clip-editor">
+    <div class="clip-head"><div><span class="eyebrow">Clip studio</span><h3>Make a short from this video</h3></div><span class="clip-badge">Max 60s</span></div>
+    <p class="clip-note">Clips are rendered in your browser. Your source stays local; use only media you own or have permission to republish.</p>
+    <div class="clip-grid"><label>Start <input id="clip-start" type="number" min="0" max="${Math.floor(max)}" step="0.1" value="${Math.max(0, Math.floor((video.currentTime || 0) - 5))}"></label><label>End <input id="clip-end" type="number" min="1" max="${Math.floor(max)}" step="0.1" value="${Math.floor(initialEnd)}"></label></div>
+    <div class="clip-grid"><label>Title <input id="clip-title" maxlength="100" value="${esc(title)}"></label><label>Caption &amp; hashtags <textarea id="clip-caption" maxlength="500" rows="2">${esc(suggestion(title))}</textarea></label></div>
+    <div class="clip-preview"><video id="clip-preview-video" muted playsinline></video><div class="clip-progress"><i></i></div><span id="clip-time">Ready to render</span></div>
+    <div class="actions"><button class="primary" data-clip-act="render">Render clip</button><button class="secondary" data-clip-act="share" disabled>Share / publish</button><button class="ghost" data-clip-act="copy" disabled>Copy caption</button></div>
+    <div class="clip-status" role="status"></div>
+  </section>`;
+  const q = (s) => host.querySelector(s);
+  const preview = q('#clip-preview-video');
+  const status = q('.clip-status');
+  const renderButton = q('[data-clip-act="render"]');
+  const shareButton = q('[data-clip-act="share"]');
+  const copyButton = q('[data-clip-act="copy"]');
+  let output = null;
+  let rendering = false;
+  try { preview.src = video.currentSrc || video.src; preview.currentTime = video.currentTime || 0; } catch {}
+  const setStatus = (message, tone = '') => { status.className = `clip-status ${tone}`; status.textContent = message; onStatus?.(message); };
+  const values = () => {
+    const start = clamp(q('#clip-start').value, 0, max);
+    const end = clamp(q('#clip-end').value, start + 1, max);
+    return { start, end: Math.min(end, start + 60), title: q('#clip-title').value.trim() || 'free clip', caption: q('#clip-caption').value.trim() || suggestion(title) };
+  };
+  const paintPreview = () => { const { start, end } = values(); preview.currentTime = start; q('#clip-time').textContent = `${fmt(start)} — ${fmt(end)} · ${fmt(end - start)}`; };
+  ['#clip-start', '#clip-end'].forEach((s) => q(s).addEventListener('input', paintPreview));
+  paintPreview();
+
+  async function render() {
+    if (rendering) return;
+    if (!video.captureStream || !window.MediaRecorder) { setStatus('This browser cannot render clips. Try the latest Chrome, Edge, or Firefox.', 'error'); return; }
+    const { start, end, title: clipTitle, caption } = values();
+    if (end <= start || end - start > 60) { setStatus('Choose a clip between 1 and 60 seconds.', 'error'); return; }
+    rendering = true; renderButton.disabled = true; shareButton.disabled = true; copyButton.disabled = true; output = null;
+    setStatus('Rendering in real time — keep this tab open…');
+    const oldTime = video.currentTime; const oldPaused = video.paused; const stream = video.captureStream();
+    const mimeType = recorderMime(); const chunks = []; const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const stopAt = end; let timer;
+    const finish = () => { clearInterval(timer); try { if (oldPaused) video.pause(); else video.play().catch(() => {}); video.currentTime = oldTime; } catch {} };
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.onerror = () => { finish(); rendering = false; renderButton.disabled = false; setStatus('The browser could not encode this clip.', 'error'); };
+    recorder.onstop = () => {
+      finish(); output = new File([new Blob(chunks, { type: recorder.mimeType || 'video/webm' })], `${clipTitle.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'free-clip'}.webm`, { type: recorder.mimeType || 'video/webm' });
+      rendering = false; renderButton.disabled = false; shareButton.disabled = false; copyButton.disabled = false;
+      setStatus(`Ready — ${fmt(end - start)} clip rendered. Download it or share it to your connected workflow.`, 'success');
+    };
+    try { video.currentTime = start; await new Promise((resolve) => video.addEventListener('seeked', resolve, { once: true })); recorder.start(250); await video.play(); timer = setInterval(() => { const elapsed = Math.max(0, video.currentTime - start); q('.clip-progress i').style.width = `${Math.min(100, elapsed / (end - start) * 100)}%`; q('#clip-time').textContent = `Rendering ${fmt(elapsed)} / ${fmt(end - start)}`; if (video.currentTime >= stopAt - 0.05) { clearInterval(timer); if (recorder.state !== 'inactive') recorder.stop(); } }, 100); } catch { try { recorder.stop(); } catch {} finish(); setStatus('Could not seek or play this source for rendering.', 'error'); rendering = false; renderButton.disabled = false; }
+  }
+  async function share() {
+    if (!output) return;
+    const { title: clipTitle, caption } = values();
+    try {
+      if (navigator.share) await navigator.share({ title: clipTitle, text: caption, files: [output] });
+      else { const a = document.createElement('a'); a.href = URL.createObjectURL(output); a.download = output.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); setStatus('Clip downloaded. Upload it in the official Instagram, YouTube, TikTok, or Facebook creator tool.', 'success'); }
+    } catch (e) { if (e.name !== 'AbortError') setStatus('Share was not completed. Use Download from the share button again.', 'error'); }
+  }
+  q('[data-clip-act="render"]').onclick = render;
+  shareButton.onclick = share;
+  copyButton.onclick = async () => { try { await navigator.clipboard.writeText(values().caption); setStatus('Caption copied.', 'success'); } catch { setStatus('Clipboard access is unavailable.', 'error'); } };
+  return { destroy() { try { preview.pause(); } catch {} host.replaceChildren(); } };
+}

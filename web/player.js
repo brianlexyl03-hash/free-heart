@@ -56,6 +56,7 @@ export function mountPlayer(host, opts) {
         <button class="vp-btn" data-act="speed">${svg('speed')}<span class="vp-speed-label">1×</span></button>
         <button class="vp-btn" data-act="subs">${svg('cc')}<span>Subtitles</span></button>
         <button class="vp-btn" data-act="info">${svg('info')}<span>Info</span></button>
+        <button class="vp-btn" data-act="clip"><span class="vp-clip-icon">✂</span><span>Clip</span></button>
       </div>
       <div class="vp-center">
         <button class="vp-round" data-act="back">−10</button>
@@ -485,6 +486,7 @@ export function mountPlayer(host, opts) {
     rotlock: async () => { if (rotLocked) { unlockOrientation(); toast('Auto-rotate on — the screen can turn again'); } else if (await lockOrientation(orient()?.type || 'any')) toast('Rotation locked — the screen will not turn'); },
     rotate: async () => { const land = (orient()?.type || '').startsWith('landscape'); if (await lockOrientation(land ? 'portrait' : 'landscape')) toast(land ? 'Portrait (locked)' : 'Landscape (locked)'); },
     retry: () => retry(false),
+    clip: () => opts.onClip?.(video),
   };
   root.addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]');

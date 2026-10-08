@@ -48,6 +48,12 @@ The player exposes every resolution returned by the live provider—for example 
 
 Downloads use a service-worker queue and Origin Private File System storage. Up to three file downloads run concurrently, progress is persisted locally, and returning to the PWA restores queued/downloading/completed states. The queue continues while the page is backgrounded or the user navigates within the app. Browser engines may suspend service workers when the browser is fully force-closed; no web app can guarantee work after an operating-system force-stop. HLS sources remain playable but cannot be saved as a single file.
 
+### Clip Studio and short-form publishing
+
+The player and offline Downloads page include **Clip Studio**. It renders a user-selected 1–60 second segment in the browser using `MediaRecorder`, so it works while watching a same-origin stream and while playing an offline OPFS download. The editor creates a title, suggested caption, and hashtags, then supports local download, native device sharing, and copying the caption. See [`automation/README.md`](automation/README.md) for the reviewed n8n patterns and the recommended official-API publishing flow.
+
+The app does not collect social passwords or use unofficial Instagram/TikTok/Facebook/YouTube scraping. Direct publishing requires the selected platform’s official OAuth/app credentials in an owner-controlled automation service such as n8n, Make, or PostWire. Only clip media that you own or are licensed to republish.
+
 ### VLC-style player controls
 
 The player includes volume and mute, visual brightness, Fit/Fill sizing, fullscreen, Picture-in-Picture, keyboard shortcuts (`Space`, `F`, and `M`), and Screen Wake Lock through the browser. Wake Lock prevents supported devices from dimming or locking while the user is watching; the operating system may still release it for battery or policy reasons. A website cannot change Android or iOS hardware brightness directly, so the brightness control adjusts the video’s visual brightness instead.

@@ -1,4 +1,5 @@
 import { mountPlayer } from './player.js';
+import { mountClipEditor } from './clipper.js';
 import { info as matureInfo, confirmAccess, getMode, setMode, flag, unflag, markConfirmed } from './maturity.js';
 const app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -382,7 +383,7 @@ async function watchPage(id, episode) {
     const epLabel = episode ? ((meta?.episodes || []).find((e) => e.key === episode)?.label || episode) : '';
     const title = meta ? `${meta.title}${epLabel ? ` · ${epLabel}` : ''}` : (epLabel || 'Now playing');
     let res = resolved.selectedResolution;
-    app.innerHTML = `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="vp-host" class="vp-host"></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>${esc(title)}</h2></div>${qualitySelect(resolved.resolutions, res)}</div><div id="player-message" class="notice subtle">${playerHint(resolved.kind)}</div>`;
+    app.innerHTML = `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="vp-host" class="vp-host"></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>${esc(title)}</h2></div>${qualitySelect(resolved.resolutions, res)}</div><div id="player-message" class="notice subtle">${playerHint(resolved.kind)}</div><div id="clip-editor"></div>`;
     const message = document.getElementById('player-message');
     const posKey = `free.pos.${id}|${episode || ''}`;
     const subs = (r) => (r.subtitles || []).map((s) => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) }));
@@ -412,6 +413,7 @@ async function watchPage(id, episode) {
         }
       },
       onQuality: switchQuality,
+      onClip: (video) => mountClipEditor(document.getElementById('clip-editor'), { video, title }),
       onRetry: async () => { resolved = await resolveStream(id, episode, res); return { src: resolved.stream, tracks: subs(resolved) }; },
     });
     activePlayer = vp;
@@ -637,11 +639,13 @@ async function playDownload(t) {
     const file = await (await root.getFileHandle(t.file)).getFile();
     stopPlayer();
     const host = document.getElementById('download-player');
+    const clipHost = document.getElementById('download-clip-editor');
     const key = `free.pos.dl.${t.taskId}`;
     activePlayer = mountPlayer(host, {
       src: URL.createObjectURL(file.slice(0, file.size, /^video\//.test(t.type || '') ? t.type : 'video/mp4')), title: t.name, kind: 'local', probe: false,
       info: { size: file.size, mime: t.type || 'video/mp4', ranges: true }, startAt: Number(localStorage.getItem(key) || 0),
       onProgress: (x, d) => { try { if (Number.isFinite(d) && d - x < 60) localStorage.removeItem(key); else localStorage.setItem(key, String(Math.floor(x))); } catch { /* ignore */ } },
+      onClip: (video) => mountClipEditor(clipHost, { video, title: t.name }),
     });
     host.scrollIntoView({ behavior: 'smooth', block: 'center' });
   } catch { alert('This file is no longer in browser storage. Download it again.'); }
@@ -665,7 +669,7 @@ async function downloadsClick(event) {
   onTasksChanged();
 }
 function downloadsPage() {
-  app.innerHTML = '<section class="page-heading"><span class="eyebrow">Your library</span><h1>Downloads</h1><p>Private files saved in this browser only. Up to three download at once, even while you browse.</p></section><div class="dl-summary" id="dl-summary"></div><div id="dl-list" class="download-list"></div><div id="download-player" class="dl-player"></div>';
+  app.innerHTML = '<section class="page-heading"><span class="eyebrow">Your library</span><h1>Downloads</h1><p>Private files saved in this browser only. Up to three download at once, even while you browse.</p></section><div class="dl-summary" id="dl-summary"></div><div id="dl-list" class="download-list"></div><div id="download-player" class="dl-player"></div><div id="download-clip-editor"></div>';
   try { renderSummary(); renderDownloadList(); }
   catch (e) {
     document.getElementById('dl-list').innerHTML = `<div class="notice error"><strong>Downloads could not be shown</strong><span>${esc(e.message)}</span><button id="dl-reset" class="secondary">Reset list &amp; reload</button></div>`;
