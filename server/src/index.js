@@ -3,6 +3,7 @@ import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
 import crypto from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
@@ -125,6 +126,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const UPSTREAM_REPO = 'mesamirh/MovieBox-TUI';
 const UPSTREAM_COMMIT = process.env.UPSTREAM_COMMIT || '';
 const SOCIAL_WHATSAPP_URL = process.env.SOCIAL_WHATSAPP_URL || '';
+const PUBLIC_SITE_URL = String(process.env.PUBLIC_SITE_URL || '').replace(/\/$/, '');
 const AI_BASE_URL = process.env.AI_BASE_URL || '';
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
@@ -358,6 +360,44 @@ app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1
   const stream = Readable.fromWeb(r.body);
   stream.on('error', () => { try { reply.raw.destroy(); } catch {} });
   return reply.send(stream);
+});
+
+function htmlEscape(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+async function seoIndex({ title, description, pathName = '/', body } = {}) {
+  let html = await readFile(path.resolve(here, '../../web/index.html'), 'utf8');
+  if (PUBLIC_SITE_URL) html = html.replaceAll('__PUBLIC_SITE_URL__', PUBLIC_SITE_URL);
+  else html = html.replace(/<meta property="og:url"[^>]*>\n?|<meta property="og:image"[^>]*>\n?|<meta name="twitter:image"[^>]*>\n?|<link rel="canonical"[^>]*>\n?|<script type="application\/ld\+json">[\s\S]*?<\/script>\n?/g, '');
+  if (title) html = html.replace(/<title>[\s\S]*?<\/title>/, `<title>${htmlEscape(title)}</title>`);
+  if (description) html = html.replace(/<meta name="description" content="[^"]*">/, `<meta name="description" content="${htmlEscape(description)}">`);
+  if (PUBLIC_SITE_URL) html = html.replace(/<meta property="og:url" content="[^"]*">/, `<meta property="og:url" content="${PUBLIC_SITE_URL}${pathName}">`).replace(/<link rel="canonical" href="[^"]*">/, `<link rel="canonical" href="${PUBLIC_SITE_URL}${pathName}">`);
+  if (body) html = html.replace(/<main id="app">[\s\S]*?<\/main>/, `<main id="app">${body}</main>`);
+  return html;
+}
+
+app.get('/', async (_req, reply) => reply.type('text/html').send(await seoIndex()));
+app.get('/about', async (_req, reply) => reply.type('text/html').send(await seoIndex({ title: 'About free❤️‍🔥 — Private offline playback and Clip Studio', description: 'Learn how free❤️‍🔥 supports streaming, private offline playback, browser-based clipping, and AI captions.', pathName: '/about', body: '<section class="seo-intro"><span class="eyebrow">About free❤️‍🔥</span><h1>Stories, on your terms.</h1><p>Free❤️‍🔥 is a mobile-friendly streaming PWA with browser-private downloads, subtitles, a VLC-style player, and Clip Studio for short-form edits and AI captions.</p><p><a href="/">Back to search</a></p></section>' })));
+app.get('/title/:id', async (req, reply) => {
+  try {
+    const data = await core.title(Id.parse(req.params.id));
+    const title = String(data.title || 'Watch this title');
+    const description = String(data.overview || `Watch ${title} online with free❤️‍🔥.`).slice(0, 155);
+    const id = encodeURIComponent(req.params.id);
+    const body = `<article class="seo-intro"><span class="eyebrow">${htmlEscape(data.type || 'Title')}</span><h1>${htmlEscape(title)}</h1><p>${htmlEscape(description)}</p><p><a href="/#/title/${id}">Open ${htmlEscape(title)} in free❤️‍🔥</a></p></article>`;
+    const html = await seoIndex({ title: `${title} — free❤️‍🔥`, description, pathName: `/title/${id}`, body });
+    return reply.type('text/html').send(html);
+  } catch { return reply.code(404).type('text/html').send(await seoIndex({ title: 'Title not found — free❤️‍🔥', description: 'This title could not be found.', pathName: `/title/${encodeURIComponent(req.params.id)}`, body: '<section class="seo-intro"><h1>Title not found</h1><p>Try another search.</p><p><a href="/">Return to free❤️‍🔥</a></p></section>' })); }
+});
+app.get('/robots.txt', async (_req, reply) => {
+  const sitemap = PUBLIC_SITE_URL ? `\nSitemap: ${PUBLIC_SITE_URL}/sitemap.xml` : '';
+  return reply.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\nDisallow: /downloads${sitemap}\n`);
+});
+app.get('/sitemap.xml', async (_req, reply) => {
+  if (!PUBLIC_SITE_URL) return reply.code(503).type('text/plain').send('Set PUBLIC_SITE_URL before exposing a sitemap to crawlers.');
+  const urls = ['/', '/about'];
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map((u) => `<url><loc>${PUBLIC_SITE_URL}${u}</loc><changefreq>${u === '/' ? 'daily' : 'monthly'}</changefreq></url>`).join('')}</urlset>`;
+  return reply.type('application/xml').send(xml);
 });
 
 await app.register(fastifyStatic, { root: path.resolve(here, '../../web') });

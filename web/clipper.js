@@ -1,4 +1,5 @@
 import { AI_PRESETS, loadAIConnector, saveAIConnector, generateCaption, testAIConnector } from './ai-connectors.js';
+import { loadPostiz, savePostiz, listPostizIntegrations, publishWithPostiz } from './postiz.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clamp = (v, min, max) => Math.min(max, Math.max(min, Number(v) || 0));
@@ -24,6 +25,7 @@ export function mountClipEditor(host, { video, title = 'Untitled clip', onStatus
     <div class="clip-grid"><label>Title <input id="clip-title" maxlength="100" value="${esc(title)}"></label><label>Caption &amp; hashtags <textarea id="clip-caption" maxlength="500" rows="2">${esc(suggestion(title))}</textarea></label></div>
     <details class="ai-connector"><summary>AI captions &amp; connected models</summary><div class="clip-grid"><label>Provider<select id="ai-provider">${Object.entries(AI_PRESETS).map(([key, item]) => `<option value="${key}">${esc(item.label)}</option>`).join('')}</select></label><label>Model <input id="ai-model" autocomplete="off" placeholder="gpt-4o-mini"></label><label>OpenAI-compatible URL <input id="ai-base-url" type="url" autocomplete="url" placeholder="https://api.openai.com/v1"></label></div><div class="clip-grid"><label>API key <input id="ai-key" type="password" autocomplete="off" placeholder="Stored only in this browser"></label><label>Style<select id="ai-style"><option>punchy</option><option>cinematic</option><option>funny</option><option>educational</option><option>minimal</option></select></label><label>Language <input id="ai-language" value="English"></label></div><div class="actions"><button class="secondary" data-clip-act="save-ai">Save connector</button><button class="secondary" data-clip-act="test-ai">Test connection</button><button class="primary" data-clip-act="caption-ai">Generate caption</button></div><small class="clip-note">Works with OpenAI, xAI/Grok, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible gateway. Your key is sent only over HTTPS to this app and is never logged.</small></details>
     <div class="clip-preview"><video id="clip-preview-video" muted playsinline></video><div class="clip-progress"><i></i></div><span id="clip-time">Ready to render</span></div>
+    <details class="postiz-connector"><summary>Publish with Postiz</summary><div class="clip-grid"><label>Postiz API URL <input id="postiz-url" type="url" value="https://api.postiz.com/public/v1"></label><label>Postiz API key <input id="postiz-key" type="password" autocomplete="off" placeholder="Stored only in this browser"></label><label>Channel <select id="postiz-channel"><option value="">Load channels first</option></select></label></div><div class="actions"><button class="secondary" data-clip-act="postiz-load">Load channels</button><button class="primary" data-clip-act="postiz-post" disabled>Post now</button></div><small class="clip-note">Postiz supports Instagram, YouTube, TikTok, Facebook, and many more through its official API. The API is beta-limited, so review the post in Postiz before enabling automation.</small></details>
     <div class="actions"><button class="primary" data-clip-act="render">Render clip</button><button class="secondary" data-clip-act="share" disabled>Share / publish</button><button class="ghost" data-clip-act="copy" disabled>Copy caption</button></div>
     <div class="clip-status" role="status"></div>
   </section>`;
@@ -40,6 +42,14 @@ export function mountClipEditor(host, { video, title = 'Untitled clip', onStatus
   const keyInput = q('#ai-key');
   const styleInput = q('#ai-style');
   const languageInput = q('#ai-language');
+  const postizConfig = loadPostiz();
+  const postizUrl = q('#postiz-url');
+  const postizKey = q('#postiz-key');
+  const postizChannel = q('#postiz-channel');
+  const postizLoad = q('[data-clip-act="postiz-load"]');
+  const postizPost = q('[data-clip-act="postiz-post"]');
+  postizUrl.value = postizConfig.baseUrl;
+  postizKey.value = postizConfig.apiKey || '';
   providerSelect.value = Object.entries(AI_PRESETS).find(([, item]) => item.baseUrl === aiConfig.baseUrl)?.[0] || 'custom';
   modelInput.value = aiConfig.model || '';
   baseUrlInput.value = aiConfig.baseUrl || '';
@@ -86,11 +96,14 @@ export function mountClipEditor(host, { video, title = 'Untitled clip', onStatus
       else { const a = document.createElement('a'); a.href = URL.createObjectURL(output); a.download = output.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); setStatus('Clip downloaded. Upload it in the official Instagram, YouTube, TikTok, or Facebook creator tool.', 'success'); }
     } catch (e) { if (e.name !== 'AbortError') setStatus('Share was not completed. Use Download from the share button again.', 'error'); }
   }
+  function persistPostiz() { return savePostiz({ baseUrl: postizUrl.value, apiKey: postizKey.value, integrationId: postizChannel.value }); }
   q('[data-clip-act="render"]').onclick = render;
   shareButton.onclick = share;
   copyButton.onclick = async () => { try { await navigator.clipboard.writeText(values().caption); setStatus('Caption copied.', 'success'); } catch { setStatus('Clipboard access is unavailable.', 'error'); } };
   q('[data-clip-act="save-ai"]').onclick = () => { saveAIConnector({ label: providerSelect.options[providerSelect.selectedIndex]?.text, baseUrl: baseUrlInput.value, model: modelInput.value, apiKey: keyInput.value }); setStatus('AI connector saved in this browser.', 'success'); };
   q('[data-clip-act="test-ai"]').onclick = async () => { try { saveAIConnector({ label: providerSelect.options[providerSelect.selectedIndex]?.text, baseUrl: baseUrlInput.value, model: modelInput.value, apiKey: keyInput.value }); setStatus(`Testing ${providerSelect.options[providerSelect.selectedIndex]?.text}…`); const result = await testAIConnector(); setStatus(`Connected. Test caption: ${result}`, 'success'); } catch (e) { setStatus(e.message, 'error'); } };
   q('[data-clip-act="caption-ai"]').onclick = async () => { try { saveAIConnector({ label: providerSelect.options[providerSelect.selectedIndex]?.text, baseUrl: baseUrlInput.value, model: modelInput.value, apiKey: keyInput.value }); setStatus('Generating an AI caption…'); const result = await generateCaption({ title: q('#clip-title').value || title, context: `Clip length ${Math.round(values().end - values().start)} seconds. ${q('#clip-caption').value}`, style: styleInput.value, language: languageInput.value }); if (result.caption) q('#clip-caption').value = result.caption; if (result.title) q('#clip-title').value = result.title; setStatus(`Caption generated with ${result.model || modelInput.value}.`, 'success'); } catch (e) { setStatus(e.message, 'error'); } };
+  postizLoad.onclick = async () => { try { persistPostiz(); setStatus('Loading your Postiz channels…'); const channels = await listPostizIntegrations(); postizChannel.innerHTML = channels.length ? channels.map((x) => `<option value="${esc(x.id)}">${esc(x.name || x.profile || x.identifier || x.id)} · ${esc(x.identifier || 'channel')}</option>`).join('') : '<option value="">No channels connected</option>'; const saved = loadPostiz(); if (saved.integrationId) postizChannel.value = saved.integrationId; postizPost.disabled = !channels.length; setStatus(`${channels.length} Postiz channel${channels.length === 1 ? '' : 's'} loaded.`, 'success'); } catch (e) { setStatus(e.message, 'error'); } };
+  postizPost.onclick = async () => { if (!output) { setStatus('Render the clip before posting.', 'error'); return; } try { persistPostiz(); setStatus('Uploading clip to Postiz…'); await publishWithPostiz(output, q('#clip-caption').value.trim() || suggestion(title)); setStatus('Posted through Postiz. Check the connected channel for its publishing status.', 'success'); } catch (e) { setStatus(e.message, 'error'); } };
   return { destroy() { try { preview.pause(); } catch {} host.replaceChildren(); } };
 }

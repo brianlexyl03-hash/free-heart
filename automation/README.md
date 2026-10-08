@@ -54,6 +54,30 @@ Create a **Webhook** trigger that accepts a multipart clip file plus JSON fields
 
 Then add a human approval step, upload through the platform's official node/API, and return the published URL. Keep the webhook private with an n8n header secret. Do not expose platform access tokens in the browser or commit them to this repository.
 
+## Postiz integration applied
+
+Postiz was reviewed and cloned separately because its open-source monorepo is **AGPL-3.0** and should not be embedded into this Apache/MIT application. Its official public API is the safer integration boundary. Clip Studio now includes a **Publish with Postiz** panel that can:
+
+1. Accept a Postiz Cloud or self-hosted Public API URL and API key.
+2. Load connected channels/integrations.
+3. Upload the rendered clip.
+4. Create an immediate post for the selected channel.
+
+Postiz supports Instagram, YouTube, TikTok, Facebook, and many other channels. Its public API is beta and rate-limited, so review the post in Postiz before turning on unattended automation. The browser stores the user-provided Postiz key locally; it is not placed in the repository or server logs. See the [Postiz Public API docs](https://docs.postiz.com/public-api).
+
+## Search visibility applied
+
+The app now serves crawler-visible homepage, About, and `/title/:id` pages instead of only an empty client-rendered shell. It also serves:
+
+- Per-page titles and descriptions.
+- Open Graph and Twitter metadata.
+- JSON-LD `WebSite` structured data.
+- `robots.txt` with API/download exclusions.
+- `sitemap.xml` for public routes when `PUBLIC_SITE_URL` is configured.
+- Clean crawlable title URLs while preserving the existing hash-based player.
+
+Set `PUBLIC_SITE_URL` to the real HTTPS domain in Render before submitting `/sitemap.xml` to Google Search Console. Search engines cannot be guaranteed to rank a site, but these changes make the intended public content indexable and shareable.
+
 ## Current boundary
 
 The client-side editor intentionally does not upload media to an unknown third party. That keeps private downloads private and makes the publishing connection an explicit owner-controlled automation choice. A later server-side webhook adapter can be added once the deployment owner selects n8n/Make/PostWire and configures its secret in Render environment variables.

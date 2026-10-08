@@ -4,7 +4,7 @@ import { info as matureInfo, confirmAccess, getMode, setMode, flag, unflag, mark
 const app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n) => n > 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${(n / 1e6).toFixed(1)} MB`;
-const titleUrl = (id) => `#/title/${encodeURIComponent(id)}`;
+const titleUrl = (id) => `/title/${encodeURIComponent(id)}`;
 const TASTE_KEY = 'free.taste.v1';
 const NOTICE_KEY = 'free.notice.v1';
 
@@ -725,6 +725,9 @@ function route() {
   app.onclick = null;
   stopPlayer();
   document.querySelector('.sheet-backdrop')?.remove();
+  const cleanTitle = /^\/title\/(.+)$/.exec(location.pathname);
+  if (cleanTitle && !location.hash) return titlePage(decodeURIComponent(cleanTitle[1]));
+  if (location.pathname === '/about' && !location.hash) { checkUpstreamUpdate(); return aboutPage(); }
   const [segment, rawTail = ''] = location.hash.replace(/^#\//, '').split('/');
   if (segment === 'title') return titlePage(decodeURIComponent(rawTail));
   if (segment === 'watch') { const [rawId, query] = rawTail.split('?'); return watchPage(decodeURIComponent(rawId), new URLSearchParams(query).get('ep')); }
