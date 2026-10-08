@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.js';
+import { registerLiveScores } from './live-scores.js';
 import { registerPushRoutes } from './push-notifications.js';
 import { startAutomaticPush } from './auto-push.js';
 
@@ -28,6 +29,7 @@ const app = Fastify({
 await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
 
 registerPushRoutes(app);
+registerLiveScores(app);
 
 app.get('/google30f58f739b375061.html', async (_req, reply) => {
   return reply
@@ -264,9 +266,14 @@ app.get('/api/title/:id', async (req) => core.title(Id.parse(req.params.id)));
 app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute' } } }, async (req) => {
   const b = z.object({ id: Id, episode: z.string().max(64).optional(), resolution: Resolution.nullish() }).parse(req.body);
   const r = await core.resolve(b.id, b.episode, b.resolution ?? undefined);
+  const candidates = (r.candidates || [{ url: r.url, kind: r.kind, headers: r.headers }]).map((candidate) => ({
+    kind: candidate.kind,
+    stream: mint(candidate.url, candidate.headers),
+  }));
   return {
     kind: r.kind,
-    stream: mint(r.url, r.headers),
+    stream: candidates[0]?.stream || mint(r.url, r.headers),
+    candidates,
     subtitles: (r.subtitles || []).map((s) => ({ lang: s.lang, label: s.label, src: mint(s.url, r.headers) })),
     resolutions: r.resolutions || [],
     selectedResolution: r.selectedResolution,

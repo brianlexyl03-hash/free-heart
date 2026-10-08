@@ -8,7 +8,10 @@ use axum::{
 use moviebox_tui::{
     providers::{
         ReleaseProvider,
-        models::{CatalogItem, MediaDetails, MediaType, ProviderError, ProviderKind, Release},
+        models::{
+            CatalogItem, MediaDetails, MediaType, ProviderError, ProviderKind, Release,
+            SourceMirror,
+        },
     },
     service::MovieBoxService,
 };
@@ -131,10 +134,18 @@ struct ResolveResponse {
     url: String,
     kind: &'static str,
     headers: HashMap<String, String>,
+    candidates: Vec<ResolveCandidate>,
     subtitles: Vec<SubtitleResponse>,
     resolutions: Vec<u32>,
     #[serde(rename = "selectedResolution")]
     selected_resolution: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct ResolveCandidate {
+    url: String,
+    kind: &'static str,
+    headers: HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -335,16 +346,34 @@ async fn title(
     Ok(Json(title_response(details)))
 }
 
-fn allowed_headers(release: &Release) -> HashMap<String, String> {
-    release
-        .mirrors
-        .first()
-        .into_iter()
-        .flat_map(|mirror| mirror.headers.iter())
+fn allowed_headers(mirror: &SourceMirror) -> HashMap<String, String> {
+    mirror
+        .headers
+        .iter()
         .filter_map(|(name, value)| {
             let key = name.to_ascii_lowercase();
             (key == "referer" || key == "user-agent" || key == "cookie" || key == "origin")
                 .then(|| (key, value.clone()))
+        })
+        .collect()
+}
+
+fn resolve_candidates(release: &Release) -> Vec<ResolveCandidate> {
+    release
+        .mirrors
+        .iter()
+        .filter(|mirror| {
+            mirror.resolver_url.starts_with("http://")
+                || mirror.resolver_url.starts_with("https://")
+        })
+        .map(|mirror| ResolveCandidate {
+            url: mirror.resolver_url.clone(),
+            kind: if mirror.resolver_url.to_ascii_lowercase().contains(".m3u8") {
+                "hls"
+            } else {
+                "file"
+            },
+            headers: allowed_headers(mirror),
         })
         .collect()
 }
@@ -399,12 +428,16 @@ async fn resolve(
             kind: "stream_unavailable",
             message: format!("No playable stream is available from {provider}; try another search result or quality"),
         })?;
-    let url = release.direct_url().unwrap_or_default().to_string();
-    let kind = if url.to_ascii_lowercase().contains(".m3u8") {
-        "hls"
-    } else {
-        "file"
-    };
+    let candidates = resolve_candidates(release);
+    let first = candidates.first().ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        kind: "stream_unavailable",
+        message: format!(
+            "No playable stream is available from {provider}; try another search result or quality"
+        ),
+    })?;
+    let url = first.url.clone();
+    let kind = first.kind;
     let subtitles = if provider == ProviderKind::MovieBox {
         if let Some(resource_id) = release.resource_id.as_deref() {
             state
@@ -437,7 +470,8 @@ async fn resolve(
     Ok(Json(ResolveResponse {
         url,
         kind,
-        headers: allowed_headers(release),
+        headers: first.headers.clone(),
+        candidates,
         subtitles,
         selected_resolution: release.resolution_u64().min(u32::MAX as u64) as u32,
         resolutions,

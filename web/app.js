@@ -335,8 +335,14 @@ function openDownloadSheet({ id, data, seasons, season, current, out }) {
     try {
       const r = await api('/api/resolve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, episode: isSeries ? cur.key : undefined, resolution: quality }) });
       if (r.kind !== 'file') throw new Error('This source is a live stream. You can play it but not save it.');
-      const resp = await fetch(r.stream, { headers: { range: 'bytes=0-0' } });
-      if (!resp.ok) { const b = await resp.json().catch(() => ({})); throw new Error(b.message || `The source answered HTTP ${resp.status}.`); }
+      let resp; let lastSourceError;
+      for (const candidate of (r.candidates || [{ stream: r.stream }])) {
+        const probe = await fetch(candidate.stream, { headers: { range: 'bytes=0-0' } });
+        if (probe.ok) { resp = probe; break; }
+        lastSourceError = probe;
+        try { await probe.body?.cancel(); } catch { /* ignore */ }
+      }
+      if (!resp) { const b = await lastSourceError?.json().catch(() => ({})); throw new Error(b?.message || `The source answered HTTP ${lastSourceError?.status || 502}.`); }
       const ct = resp.headers.get('content-type') || '';
       const cr = resp.headers.get('content-range') || '';
       let size = Number(cr.split('/')[1]) || null;
@@ -380,6 +386,7 @@ async function watchPage(id, episode) {
     const wi = matureInfo({ id, title: meta?.title, overview: meta?.overview });
     if (wi.mature && !(await confirmAccess({ id, title: meta?.title || 'This title', reasons: wi.reasons }))) { location.hash = '#/'; return; }
     let resolved = first;
+    let candidateIndex = 0;
     const epLabel = episode ? ((meta?.episodes || []).find((e) => e.key === episode)?.label || episode) : '';
     const title = meta ? `${meta.title}${epLabel ? ` · ${epLabel}` : ''}` : (epLabel || 'Now playing');
     let res = resolved.selectedResolution;
@@ -393,6 +400,7 @@ async function watchPage(id, episode) {
       message.textContent = 'Switching quality…';
       try {
         resolved = await resolveStream(id, episode, r);
+        candidateIndex = 0;
         res = resolved.selectedResolution || r;
         vp.setSource(resolved.stream, { startAt: vp.video.currentTime, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res });
         const sel = document.getElementById('quality'); if (sel) sel.value = String(res);
@@ -414,7 +422,17 @@ async function watchPage(id, episode) {
       },
       onQuality: switchQuality,
       onClip: (video) => mountClipEditor(document.getElementById('clip-editor'), { video, title }),
-      onRetry: async () => { resolved = await resolveStream(id, episode, res); return { src: resolved.stream, tracks: subs(resolved) }; },
+      onRetry: async () => {
+        const candidates = resolved.candidates || [];
+        if (candidateIndex + 1 < candidates.length) {
+          candidateIndex += 1;
+          const next = candidates[candidateIndex];
+          return { src: next.stream, tracks: subs(resolved) };
+        }
+        resolved = await resolveStream(id, episode, res);
+        candidateIndex = 0;
+        return { src: resolved.stream, tracks: subs(resolved) };
+      },
     });
     activePlayer = vp;
     document.getElementById('quality')?.addEventListener('change', (event) => switchQuality(Number(event.target.value)));
@@ -730,6 +748,7 @@ function route() {
   if (location.pathname === '/about' && !location.hash) { checkUpstreamUpdate(); return aboutPage(); }
   const [segment, rawTail = ''] = location.hash.replace(/^#\//, '').split('/');
   if (segment === 'title') return titlePage(decodeURIComponent(rawTail));
+  if (segment === 'live') return; // web/live.js owns the Live Match Center route
   if (segment === 'watch') { const [rawId, query] = rawTail.split('?'); return watchPage(decodeURIComponent(rawId), new URLSearchParams(query).get('ep')); }
   if (segment === 'downloads') return downloadsPage();
   if (segment === 'about') { checkUpstreamUpdate(); return aboutPage(); }

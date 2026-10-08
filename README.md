@@ -58,6 +58,10 @@ Clip Studio also includes one-click **AI captions**. Users can connect OpenAI, x
 
 Clip Studio can also publish rendered clips through the official **Postiz Public API**: load connected channels, choose Instagram/YouTube/TikTok/Facebook or another Postiz integration, upload the clip, and post it immediately. Configure `PUBLIC_SITE_URL` in deployment for crawlable homepage/About/title routes, canonical URLs, Open Graph previews, `robots.txt`, and `sitemap.xml`. This improves discoverability but cannot guarantee Google rankings; submit the sitemap through Google Search Console after deployment.
 
+The attached `free-live-classic` package is integrated as the **Live Match Center** at `#/live`. It provides cached ESPN scoreboards, fixtures, local-day navigation, match details, follow alerts while the app is open, and legitimate broadcaster listings. It deliberately does not import unauthorized stream-finder bridges or re-stream sports channels. See [`docs/LIVE-SECTION.md`](docs/LIVE-SECTION.md).
+
+For movie playback and downloads, the gateway now preserves all resolver mirrors and their provider headers. If one allowed source is expired, blocked, or temporarily unavailable, the player and offline downloader try the next resolver mirror before requesting a fresh resolution. This improves reliability without bypassing a source’s access controls.
+
 ### VLC-style player controls
 
 The player includes volume and mute, visual brightness, Fit/Fill sizing, fullscreen, Picture-in-Picture, keyboard shortcuts (`Space`, `F`, and `M`), and Screen Wake Lock through the browser. Wake Lock prevents supported devices from dimming or locking while the user is watching; the operating system may still release it for battery or policy reasons. A website cannot change Android or iOS hardware brightness directly, so the brightness control adjusts the video’s visual brightness instead.

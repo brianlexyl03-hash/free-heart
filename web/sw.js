@@ -1,5 +1,5 @@
-const V = 'free-shell-v7';
-const SHELL = ['/', '/app.js', '/player.js', '/clipper.js', '/ai-connectors.js', '/postiz.js', '/maturity.js', '/styles.css', '/manifest.webmanifest', '/icon.svg'];
+const V = 'free-shell-v8';
+const SHELL = ['/', '/app.js', '/player.js', '/clipper.js', '/ai-connectors.js', '/postiz.js', '/maturity.js', '/styles.css', '/live.js', '/live.css', '/live-config.js', '/manifest.webmanifest', '/icon.svg'];
 const DB_NAME = 'free-downloads-v1';
 const STORE = 'tasks';
 const MAX_ACTIVE = 3;
@@ -83,6 +83,8 @@ async function runDownload(task) {
     if (!navigator.storage?.getDirectory) throw new Error('Private storage is not supported by this browser.');
     await save({ status: 'resolving', error: null });
     let resolved = await resolveStream(t, ac.signal);
+    let candidates = resolved.candidates || [{ stream: resolved.stream }];
+    let candidateIndex = 0;
     let reResolved = false;
     if (resolved.kind !== 'file') throw new Error('This source is a live/HLS stream and cannot be saved as one file. Use Play instead.');
     const root = await navigator.storage.getDirectory();
@@ -97,9 +99,15 @@ async function runDownload(task) {
     for (;;) {
       attempts += 1;
       let response = null;
-      try { response = await fetch(resolved.stream, { headers: existing > 0 ? { range: `bytes=${existing}-` } : {}, signal: ac.signal, credentials: 'same-origin' }); }
+      const candidate = candidates[candidateIndex] || { stream: resolved.stream };
+      try { response = await fetch(candidate.stream, { headers: existing > 0 ? { range: `bytes=${existing}-` } : {}, signal: ac.signal, credentials: 'same-origin' }); }
       catch (e) { if (ac.signal.aborted) throw e; }
       if (!response || response.status >= 500 || response.status === 429) {
+        if (response && candidateIndex + 1 < candidates.length) {
+          try { await response.body?.cancel(); } catch { /* ignore */ }
+          candidateIndex += 1;
+          continue;
+        }
         const bj = response ? await response.json().catch(() => ({})) : {};
         if (attempts >= 5) throw new Error(response ? (bj.message || `The server kept failing (HTTP ${response.status}). Try again later.`) : 'Connection lost. Try again when you are online.');
         await sleep(1500 * attempts, ac.signal);
@@ -107,10 +115,17 @@ async function runDownload(task) {
         continue;
       }
       if (response.status === 416 && existing > 0) break; // everything is already on disk
-      if ([401, 403, 410].includes(response.status) && !reResolved) { // signed link expired: get a fresh one once
-        reResolved = true;
+      if ([401, 403, 410].includes(response.status)) { // try another mirror, then refresh signed links
         try { await response.body?.cancel(); } catch { /* ignore */ }
+        if (candidateIndex + 1 < candidates.length) {
+          candidateIndex += 1;
+          continue;
+        }
+        if (reResolved) throw new Error(`All available sources refused the download (HTTP ${response.status}). Try another quality or title.`);
+        reResolved = true;
         resolved = await resolveStream(t, ac.signal);
+        candidates = resolved.candidates || [{ stream: resolved.stream }];
+        candidateIndex = 0;
         continue;
       }
       if (!response.ok) {
