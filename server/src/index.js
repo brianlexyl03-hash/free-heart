@@ -29,6 +29,12 @@ await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
 
 registerPushRoutes(app);
 
+app.get('/google30f58f739b375061.html', async (_req, reply) => {
+  return reply
+    .type('text/html; charset=utf-8')
+    .send('google-site-verification: google30f58f739b375061.html');
+});
+
 async function startAutomaticPushRecommendations() {
   try {
     const { sendToAll } = await import('./push-notifications.js');
