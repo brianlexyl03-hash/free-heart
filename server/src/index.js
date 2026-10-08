@@ -125,6 +125,9 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const UPSTREAM_REPO = 'mesamirh/MovieBox-TUI';
 const UPSTREAM_COMMIT = process.env.UPSTREAM_COMMIT || '';
 const SOCIAL_WHATSAPP_URL = process.env.SOCIAL_WHATSAPP_URL || '';
+const AI_BASE_URL = process.env.AI_BASE_URL || '';
+const AI_API_KEY = process.env.AI_API_KEY || '';
+const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
 let adConfig = {
   enabled: Boolean(process.env.AD_URL),
   url: process.env.AD_URL || '',
@@ -208,6 +211,45 @@ app.get('/api/social', async () => ({
   instagram: 'https://instagram.com/try_it_nah',
   whatsapp: SOCIAL_WHATSAPP_URL || null,
 }));
+
+function aiBaseUrl(value) {
+  const raw = String(value || AI_BASE_URL || '').replace(/\/$/, '');
+  if (!raw) throw new CoreClientError(400, 'ai_not_configured', 'Connect an AI provider first.');
+  const u = new URL(raw);
+  if (!['http:', 'https:'].includes(u.protocol)) throw new CoreClientError(400, 'bad_ai_url', 'The AI endpoint must use HTTP or HTTPS.');
+  if (/^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.|\[?::1)/i.test(u.hostname) && !['localhost', '127.0.0.1'].includes(u.hostname)) throw new CoreClientError(400, 'bad_ai_url', 'Private network AI endpoints are not reachable from this deployment.');
+  return raw;
+}
+
+app.post('/api/ai/caption', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+  const body = z.object({
+    title: z.string().trim().min(1).max(160),
+    context: z.string().trim().max(1200).default(''),
+    style: z.enum(['punchy', 'cinematic', 'funny', 'educational', 'minimal']).default('punchy'),
+    language: z.string().trim().min(2).max(40).default('English'),
+    baseUrl: z.string().url().optional(),
+    model: z.string().trim().min(1).max(120).optional(),
+  }).parse(req.body || {});
+  const key = String(req.headers['x-ai-api-key'] || AI_API_KEY || '').trim();
+  if (!key) return reply.code(401).send({ error: 'ai_key_required', message: 'Add an AI API key in Clip Studio or configure AI_API_KEY on the server.' });
+  const endpoint = `${aiBaseUrl(body.baseUrl)}/chat/completions`;
+  const prompt = `Create metadata for a short-form video clip. Return JSON only with keys title and caption. The caption must be under 280 characters, attractive but not misleading, and include 3-6 relevant hashtags. Do not claim facts not present in the context. Language: ${body.language}. Style: ${body.style}. Video title: ${body.title}. Context: ${body.context}`;
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: body.model || AI_MODEL, temperature: 0.8, messages: [{ role: 'system', content: 'You write concise, platform-safe social video metadata.' }, { role: 'user', content: prompt }] }),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch { return reply.code(502).send({ error: 'ai_unreachable', message: 'The selected AI endpoint could not be reached.' }); }
+  const upstream = await response.json().catch(() => ({}));
+  if (!response.ok) return reply.code(response.status === 429 ? 429 : 502).send({ error: 'ai_provider_error', message: upstream.error?.message || 'The AI provider rejected the request.' });
+  const content = upstream.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || !content.trim()) return reply.code(502).send({ error: 'ai_empty', message: 'The AI provider returned no caption.' });
+  let parsed;
+  try { parsed = JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/g, '').trim()); } catch { parsed = { title: body.title, caption: content.trim() }; }
+  return { title: String(parsed.title || body.title).slice(0, 100), caption: String(parsed.caption || content).slice(0, 500), model: body.model || AI_MODEL };
+});
 
 app.get('/api/title/:id', async (req) => core.title(Id.parse(req.params.id)));
 

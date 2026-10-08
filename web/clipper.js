@@ -1,3 +1,5 @@
+import { AI_PRESETS, loadAIConnector, saveAIConnector, generateCaption, testAIConnector } from './ai-connectors.js';
+
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clamp = (v, min, max) => Math.min(max, Math.max(min, Number(v) || 0));
 const fmt = (s) => { s = Math.max(0, Math.floor(Number(s) || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -20,6 +22,7 @@ export function mountClipEditor(host, { video, title = 'Untitled clip', onStatus
     <p class="clip-note">Clips are rendered in your browser. Your source stays local; use only media you own or have permission to republish.</p>
     <div class="clip-grid"><label>Start <input id="clip-start" type="number" min="0" max="${Math.floor(max)}" step="0.1" value="${Math.max(0, Math.floor((video.currentTime || 0) - 5))}"></label><label>End <input id="clip-end" type="number" min="1" max="${Math.floor(max)}" step="0.1" value="${Math.floor(initialEnd)}"></label></div>
     <div class="clip-grid"><label>Title <input id="clip-title" maxlength="100" value="${esc(title)}"></label><label>Caption &amp; hashtags <textarea id="clip-caption" maxlength="500" rows="2">${esc(suggestion(title))}</textarea></label></div>
+    <details class="ai-connector"><summary>AI captions &amp; connected models</summary><div class="clip-grid"><label>Provider<select id="ai-provider">${Object.entries(AI_PRESETS).map(([key, item]) => `<option value="${key}">${esc(item.label)}</option>`).join('')}</select></label><label>Model <input id="ai-model" autocomplete="off" placeholder="gpt-4o-mini"></label><label>OpenAI-compatible URL <input id="ai-base-url" type="url" autocomplete="url" placeholder="https://api.openai.com/v1"></label></div><div class="clip-grid"><label>API key <input id="ai-key" type="password" autocomplete="off" placeholder="Stored only in this browser"></label><label>Style<select id="ai-style"><option>punchy</option><option>cinematic</option><option>funny</option><option>educational</option><option>minimal</option></select></label><label>Language <input id="ai-language" value="English"></label></div><div class="actions"><button class="secondary" data-clip-act="save-ai">Save connector</button><button class="secondary" data-clip-act="test-ai">Test connection</button><button class="primary" data-clip-act="caption-ai">Generate caption</button></div><small class="clip-note">Works with OpenAI, xAI/Grok, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible gateway. Your key is sent only over HTTPS to this app and is never logged.</small></details>
     <div class="clip-preview"><video id="clip-preview-video" muted playsinline></video><div class="clip-progress"><i></i></div><span id="clip-time">Ready to render</span></div>
     <div class="actions"><button class="primary" data-clip-act="render">Render clip</button><button class="secondary" data-clip-act="share" disabled>Share / publish</button><button class="ghost" data-clip-act="copy" disabled>Copy caption</button></div>
     <div class="clip-status" role="status"></div>
@@ -30,6 +33,17 @@ export function mountClipEditor(host, { video, title = 'Untitled clip', onStatus
   const renderButton = q('[data-clip-act="render"]');
   const shareButton = q('[data-clip-act="share"]');
   const copyButton = q('[data-clip-act="copy"]');
+  const aiConfig = loadAIConnector();
+  const providerSelect = q('#ai-provider');
+  const modelInput = q('#ai-model');
+  const baseUrlInput = q('#ai-base-url');
+  const keyInput = q('#ai-key');
+  const styleInput = q('#ai-style');
+  const languageInput = q('#ai-language');
+  providerSelect.value = Object.entries(AI_PRESETS).find(([, item]) => item.baseUrl === aiConfig.baseUrl)?.[0] || 'custom';
+  modelInput.value = aiConfig.model || '';
+  baseUrlInput.value = aiConfig.baseUrl || '';
+  keyInput.value = aiConfig.apiKey || '';
   let output = null;
   let rendering = false;
   try { preview.src = video.currentSrc || video.src; preview.currentTime = video.currentTime || 0; } catch {}
@@ -40,6 +54,7 @@ export function mountClipEditor(host, { video, title = 'Untitled clip', onStatus
     return { start, end: Math.min(end, start + 60), title: q('#clip-title').value.trim() || 'free clip', caption: q('#clip-caption').value.trim() || suggestion(title) };
   };
   const paintPreview = () => { const { start, end } = values(); preview.currentTime = start; q('#clip-time').textContent = `${fmt(start)} — ${fmt(end)} · ${fmt(end - start)}`; };
+  providerSelect.onchange = () => { const next = AI_PRESETS[providerSelect.value]; if (next) { baseUrlInput.value = next.baseUrl; modelInput.value = next.model; } };
   ['#clip-start', '#clip-end'].forEach((s) => q(s).addEventListener('input', paintPreview));
   paintPreview();
 
@@ -74,5 +89,8 @@ export function mountClipEditor(host, { video, title = 'Untitled clip', onStatus
   q('[data-clip-act="render"]').onclick = render;
   shareButton.onclick = share;
   copyButton.onclick = async () => { try { await navigator.clipboard.writeText(values().caption); setStatus('Caption copied.', 'success'); } catch { setStatus('Clipboard access is unavailable.', 'error'); } };
+  q('[data-clip-act="save-ai"]').onclick = () => { saveAIConnector({ label: providerSelect.options[providerSelect.selectedIndex]?.text, baseUrl: baseUrlInput.value, model: modelInput.value, apiKey: keyInput.value }); setStatus('AI connector saved in this browser.', 'success'); };
+  q('[data-clip-act="test-ai"]').onclick = async () => { try { saveAIConnector({ label: providerSelect.options[providerSelect.selectedIndex]?.text, baseUrl: baseUrlInput.value, model: modelInput.value, apiKey: keyInput.value }); setStatus(`Testing ${providerSelect.options[providerSelect.selectedIndex]?.text}…`); const result = await testAIConnector(); setStatus(`Connected. Test caption: ${result}`, 'success'); } catch (e) { setStatus(e.message, 'error'); } };
+  q('[data-clip-act="caption-ai"]').onclick = async () => { try { saveAIConnector({ label: providerSelect.options[providerSelect.selectedIndex]?.text, baseUrl: baseUrlInput.value, model: modelInput.value, apiKey: keyInput.value }); setStatus('Generating an AI caption…'); const result = await generateCaption({ title: q('#clip-title').value || title, context: `Clip length ${Math.round(values().end - values().start)} seconds. ${q('#clip-caption').value}`, style: styleInput.value, language: languageInput.value }); if (result.caption) q('#clip-caption').value = result.caption; if (result.title) q('#clip-title').value = result.title; setStatus(`Caption generated with ${result.model || modelInput.value}.`, 'success'); } catch (e) { setStatus(e.message, 'error'); } };
   return { destroy() { try { preview.pause(); } catch {} host.replaceChildren(); } };
 }

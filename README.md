@@ -54,6 +54,8 @@ The player and offline Downloads page include **Clip Studio**. It renders a user
 
 The app does not collect social passwords or use unofficial Instagram/TikTok/Facebook/YouTube scraping. Direct publishing requires the selected platform’s official OAuth/app credentials in an owner-controlled automation service such as n8n, Make, or PostWire. Only clip media that you own or are licensed to republish.
 
+Clip Studio also includes one-click **AI captions**. Users can connect OpenAI, xAI/Grok, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible gateway by choosing a preset, model, endpoint, and API key. The key stays in the browser unless the owner configures a server-side default with `AI_BASE_URL`, `AI_MODEL`, and `AI_API_KEY`. See [`automation/README.md`](automation/README.md) for MCP, GetLeads.io, trend-source, OpenCut, and OpenReel integration guidance.
+
 ### VLC-style player controls
 
 The player includes volume and mute, visual brightness, Fit/Fill sizing, fullscreen, Picture-in-Picture, keyboard shortcuts (`Space`, `F`, and `M`), and Screen Wake Lock through the browser. Wake Lock prevents supported devices from dimming or locking while the user is watching; the operating system may still release it for battery or policy reasons. A website cannot change Android or iOS hardware brightness directly, so the brightness control adjusts the video’s visual brightness instead.
