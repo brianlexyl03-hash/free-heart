@@ -1,85 +1,207 @@
-# free❤️‍🔥
+<div align="center">
+  <a href="https://github.com/brianlexyl03-hash/free-heart">
+    <img src="https://raw.githubusercontent.com/brianlexyl03-hash/free-heart/main/web/icon-512.png" width="112" alt="free-heart icon">
+  </a>
 
-An online, mobile-friendly PWA and Fastify API gateway around the upstream [MovieBox-Tui](https://github.com/mesamirh/MovieBox-Tui) Rust provider architecture.
+  <h1>free❤️‍🔥</h1>
+  <p><strong>Watch it. Save it. Shape the moment.</strong></p>
+  <p>A mobile-first PWA for discovering stories, watching with resilient playback, clipping short-form edits, generating captions with your preferred AI, and connecting to official publishing workflows.</p>
 
-## Deploy online with Render
+  <p>
+    <a href="https://github.com/brianlexyl03-hash/free-heart/commits/main"><img src="https://img.shields.io/github/last-commit/brianlexyl03-hash/free-heart?style=for-the-badge&color=ff5ea8" alt="Last commit"></a>
+    <a href="https://github.com/brianlexyl03-hash/free-heart/blob/main/NOTICE"><img src="https://img.shields.io/badge/attribution-NOTICE-20c997?style=for-the-badge" alt="Attribution notice"></a>
+    <img src="https://img.shields.io/badge/Node.js-20%2B-5fa04e?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 20 or newer">
+    <img src="https://img.shields.io/badge/Rust-1.90%2B-dc584c?style=for-the-badge&logo=rust&logoColor=white" alt="Rust 1.90 or newer">
+    <a href="https://github.com/brianlexyl03-hash/free-heart"><img src="https://img.shields.io/github/stars/brianlexyl03-hash/free-heart?style=for-the-badge&color=ffc857" alt="GitHub stars"></a>
+  </p>
+</div>
 
-This repository includes a production `Dockerfile` and `render.yaml` Blueprint. In Render:
+<p align="center">
+  <img src="https://raw.githubusercontent.com/brianlexyl03-hash/free-heart/main/docs/readme-hero.svg" alt="Animated free-heart workflow: discover, clip, connect" width="100%">
+</p>
 
-1. Create a new **Blueprint** from this repository.
-2. Render reads `render.yaml`, builds the Rust core in a multi-stage image, and starts the public web service.
-3. Open the `https://<your-service>.onrender.com` URL after the health check becomes healthy.
+> **A note on the animation:** the hero is a lightweight SVG storyboard designed for GitHub. It shows the product loop without pretending that a screenshot is a live session. For the real application, deploy the included Render blueprint and set `PUBLIC_SITE_URL`.
 
-Render supplies the public `PORT` automatically. The Fastify gateway binds to `0.0.0.0`; the Rust process binds to `127.0.0.1:7070` only as a private in-container service. That localhost address is never the public app URL.
+### Watch the workflow
 
-### Owner-managed ads
+<p align="center">
+  <a href="https://github.com/brianlexyl03-hash/free-heart/blob/main/docs/media/free-heart-walkthrough.mp4">
+    <img src="https://raw.githubusercontent.com/brianlexyl03-hash/free-heart/main/docs/readme-hero.svg" alt="Open the free-heart walkthrough video" width="82%">
+  </a>
+</p>
 
-Set `ADMIN_PASSWORD`, `AD_URL` (an HTTPS MP4/WebM ad URL you control), and `AD_DURATION_SECONDS` from `1` to `9` as Render environment variables. Visitors receive the same enabled ad before downloads and after 50 minutes of playback. The **Owner controls** page is available at `/#/admin`; enter the password and ad URL to publish a new global ad without rebuilding the app. Keep the password only in Render Environment settings.
+<p align="center"><a href="https://github.com/brianlexyl03-hash/free-heart/blob/main/docs/media/free-heart-walkthrough.mp4">▶ Open the 12-second product walkthrough video</a></p>
 
-### Recommendations and updates
+GitHub renders repository video files on their file page rather than reliably playing them inline in every README client. The animated SVG above is the instant preview; the MP4 is the higher-fidelity walkthrough.
 
-Recommendations are opt-in and online-only. The browser keeps up to four recent search/title seeds locally, then checks at most once in each morning, noon, evening, and night window. The server receives those short-lived seeds only to return matching search results; it does not store an account, watch profile, or notification history. Browser notifications require the visitor to tap **Notify me of picks**. The About page also checks the pinned `UPSTREAM_COMMIT` against the upstream MovieBox-TUI GitHub main branch once per day and shows one owner update notice when a newer commit is detected.
+## The 30-second story
 
-The static PWA shell is cacheable by a CDN/service worker, while `/api/*` and stream responses remain uncached and personalized. Set `SOCIAL_WHATSAPP_URL` in Render if a WhatsApp contact link is desired; Instagram is `@try_it_nah`.
+1. **Discover** a movie, series, episode, or live matchday fixture.
+2. **Watch** through the PWA player with subtitles, quality switching, and resilient permitted-source fallback.
+3. **Save** authorized file sources for private offline playback.
+4. **Clip** a 1–60 second moment in Clip Studio while streaming or from an offline download.
+5. **Caption** it with a browser-connected AI provider or a local OpenAI-compatible model.
+6. **Share** through native device sharing, download, Postiz, n8n, or the platform’s official API workflow.
 
-Owner controls are not linked in the public navigation. Direct access to `/#/admin` shows only a password prompt; the ad form is rendered only after `/api/admin/check` verifies the owner password, and publishing remains protected by the same server-side password.
+## What makes it different
+
+| Capability | What it does | Where to explore |
+|---|---|---|
+| **Resilient playback** | Keeps all permitted resolver mirrors and rotates after expired, refused, or range-incompatible sources. | [`core/src/main.rs`](core/src/main.rs) · [`web/app.js`](web/app.js) |
+| **Offline-first clipping** | Uses MediaRecorder and browser storage for private, local editing without uploading a video by default. | [`web/clipper.js`](web/clipper.js) · [`web/sw.js`](web/sw.js) |
+| **AI captions** | Connects OpenAI-compatible gateways, OpenAI, xAI/Grok, OpenRouter, Gemini-friendly presets, Ollama, and LM Studio. | [`web/ai-connectors.js`](web/ai-connectors.js) |
+| **Live Match Center** | Cached scores, fixtures, match sheets, legitimate broadcaster listings, follow alerts, and targeted Web Push. | [`docs/LIVE-SECTION.md`](docs/LIVE-SECTION.md) |
+| **Official publishing** | Postiz API handoff and documented n8n patterns for platform-compliant publishing. | [`web/postiz.js`](web/postiz.js) · [`automation/README.md`](automation/README.md) |
+| **Search-ready shell** | Canonicals, Open Graph, structured data, robots, sitemap, and Google Search Console verification support. | [`web/index.html`](web/index.html) · [`server/src/index.js`](server/src/index.js) |
+
+## How the system fits together
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/brianlexyl03-hash/free-heart/main/docs/readme-architecture.png" alt="free-heart architecture diagram" width="100%">
+</p>
+
+- **`web/`** is the installable PWA: browsing, player controls, subtitles, Clip Studio, downloads, AI connectors, Postiz handoff, and Live Match Center.
+- **`server/`** is the Fastify gateway: validation, rate limiting, SEO routes, push subscriptions, stream tokens, media proxying, and cached live-score proxying.
+- **`core/`** is the Rust sidecar: the provider-facing adapter and resolver contract.
+- **`third_party/moviebox-tui/src/`** is pinned to the upstream provider architecture recorded in [`PROVENANCE.md`](PROVENANCE.md).
+- **`automation/`** contains the safe integration boundary for n8n, GetLeads.io, AI providers, trend sources, and official publishing APIs.
+
+## Live Match Center
+
+Open `/#/live` after deployment to see:
+
+- Matchday fixtures grouped by league.
+- Live, upcoming, finished, and followed filters.
+- Local timezone day navigation.
+- Match sheets with score, events, venue, countdown, and broadcaster listings.
+- In-page alerts while the app is open.
+- Optional closed-app Web Push alerts when VAPID is configured.
+- Cached/stale fallback behavior if ESPN’s public scoreboard endpoint is slow or unavailable.
+
+The Live section intentionally does **not** import unauthorized stream-finder bridges or re-stream channels. “Where to watch” lists the legitimate broadcaster information returned by the score provider.
+
+## Clip Studio: from playback to short form
+
+```text
+streaming source ─┐
+                  ├─> Clip Studio ─> trim ─> AI caption ─> download/share/publish
+offline OPFS file ┘                    │
+                                       ├─> title + hook
+                                       ├─> hashtags
+                                       └─> Postiz / n8n / official APIs
+```
+
+Clip Studio supports:
+
+- 1–60 second selections.
+- Same-origin streaming playback.
+- Offline OPFS downloads.
+- Title, caption, and hashtag editing.
+- Browser-local recording with `MediaRecorder`.
+- Native device sharing and local download.
+- AI caption generation through user-provided keys, owner-managed defaults, or local models.
+
+Only clip media that you own or are licensed to republish. The app does not collect social passwords or depend on unofficial Instagram, TikTok, Facebook, or YouTube scraping.
+
+## AI connections without the maze
+
+Choose a provider preset, then enter the model and key only when required:
+
+- OpenAI-compatible gateways.
+- OpenAI.
+- xAI/Grok.
+- OpenRouter.
+- Gemini-compatible endpoints.
+- Ollama.
+- LM Studio.
+- Your own compatible gateway or connector.
+
+Browser-provided keys stay in the browser. Owner-managed server defaults use `AI_BASE_URL`, `AI_MODEL`, and `AI_API_KEY`. Read [`automation/README.md`](automation/README.md) before enabling automated trend collection or publishing.
+
+## Social publishing, the safe way
+
+The project supports a simple handoff to **Postiz** and documents n8n workflows for official platform integrations. Connect the provider, choose the channel, review the caption, and publish through the platform’s permitted API or OAuth flow.
+
+> Automated posting is deliberately not a “scrape and blast” system. Use official APIs, respect rate limits and platform rules, and keep a human review step for third-party material.
+
+## Deploy with Render
+
+This repository includes a production Dockerfile and Render Blueprint.
+
+1. Fork or clone this repository.
+2. In Render, create a new **Blueprint** from the repository.
+3. Render reads [`render.yaml`](render.yaml), builds the Rust core, and starts the public Node gateway.
+4. Set `PUBLIC_SITE_URL` to the real HTTPS URL of your deployed service.
+5. Optionally set VAPID keys for push, AI defaults, `SOCIAL_WHATSAPP_URL`, and owner ad settings.
+6. Verify `/api/health`, `/robots.txt`, `/sitemap.xml`, and `/#/live`.
+
+Render supplies `PORT` automatically. The Fastify gateway binds to `0.0.0.0`; the Rust sidecar remains private inside the container.
+
+### Important environment variables
+
+| Variable | Purpose |
+|---|---|
+| `PUBLIC_SITE_URL` | Canonical URLs, Open Graph URLs, robots, sitemap, and search previews. |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Optional targeted Web Push alerts. |
+| `AI_BASE_URL` / `AI_MODEL` / `AI_API_KEY` | Optional owner-managed AI caption defaults. |
+| `ADMIN_PASSWORD` | Protects owner controls. Keep it in Render Environment settings. |
+| `AD_URL` / `AD_DURATION_SECONDS` | Optional owner-managed ad configuration. |
+| `SOCIAL_WHATSAPP_URL` | Optional About-page contact link. |
+| `UPSTREAM_COMMIT` | Records the pinned provider commit used by the deployment. |
 
 ## Local development
 
-For local development only, with Node >= 20, Rust >= 1.90, and network access:
+Requirements: Node.js 20+, Rust 1.90+, network access, and the upstream vendor checkout.
 
 ```sh
 sh scripts/vendor-upstream.sh
 sh scripts/start.sh
 ```
 
-Then open `http://localhost:3000`.
+Then open <http://localhost:3000>.
 
-## Architecture
+For a server-only check:
 
-- `core/` is a thin Axum HTTP adapter over upstream `MovieBoxService`, `Provider`, and `ReleaseProvider` interfaces.
-- `third_party/moviebox-tui/src/` is pinned to the exact upstream commit recorded in `PROVENANCE.md`.
-- `server/` validates and translates the sidecar contract, keeps rate limiting/log scrubbing, and tokenizes media URLs before browser delivery.
-- `web/` is the PWA with search, title details, playback, subtitles, OPFS downloads, service worker, and PNG/SVG icons.
-- `Dockerfile` builds the Rust core once and runs the public Node gateway plus private sidecar in one Render web service.
-- Geo-unblocking, VPN behavior, proxy bypasses, and alternate scraping code paths are intentionally absent.
+```sh
+cd server
+npm ci
+npm run check
+```
 
-The player exposes every resolution returned by the live provider—for example 4K/2160p, 1080p, 720p, 480p, or 360p—without inventing unavailable qualities for a title.
+## Project map
 
-Downloads use a service-worker queue and Origin Private File System storage. Up to three file downloads run concurrently, progress is persisted locally, and returning to the PWA restores queued/downloading/completed states. The queue continues while the page is backgrounded or the user navigates within the app. Browser engines may suspend service workers when the browser is fully force-closed; no web app can guarantee work after an operating-system force-stop. HLS sources remain playable but cannot be saved as a single file.
+```text
+free-heart/
+├── core/                  Rust media-core adapter
+├── server/                Fastify gateway and Web Push
+├── web/                   PWA, player, Clip Studio, Live Center
+├── automation/            AI, n8n, Postiz, trend-source guidance
+├── docs/                  Live Center and README visuals
+├── Dockerfile             Multi-stage deployment image
+├── render.yaml            Render Blueprint
+├── PROVENANCE.md          Upstream commit and attribution
+└── TEST_REPORT.md         Commands actually executed
+```
 
-### Clip Studio and short-form publishing
+## Responsible use
 
-The player and offline Downloads page include **Clip Studio**. It renders a user-selected 1–60 second segment in the browser using `MediaRecorder`, so it works while watching a same-origin stream and while playing an offline OPFS download. The editor creates a title, suggested caption, and hashtags, then supports local download, native device sharing, and copying the caption. See [`automation/README.md`](automation/README.md) for the reviewed n8n patterns and the recommended official-API publishing flow.
+- Use media sources and clips you are authorized to access and republish.
+- The app does not bypass paywalls, geo restrictions, authentication, robots rules, or provider access controls.
+- HLS streams are playable but are not saved as a single offline file by the browser downloader.
+- Browser service workers may be suspended after a full operating-system force-stop.
+- Google ranking cannot be guaranteed; submit the generated sitemap through Google Search Console after deployment.
 
-The app does not collect social passwords or use unofficial Instagram/TikTok/Facebook/YouTube scraping. Direct publishing requires the selected platform’s official OAuth/app credentials in an owner-controlled automation service such as n8n, Make, or PostWire. Only clip media that you own or are licensed to republish.
+## Attribution and verification
 
-Clip Studio also includes one-click **AI captions**. Users can connect OpenAI, xAI/Grok, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible gateway by choosing a preset, model, endpoint, and API key. The key stays in the browser unless the owner configures a server-side default with `AI_BASE_URL`, `AI_MODEL`, and `AI_API_KEY`. See [`automation/README.md`](automation/README.md) for MCP, GetLeads.io, trend-source, OpenCut, and OpenReel integration guidance.
+The upstream MIT and Apache-2.0 license files are included. See [`PROVENANCE.md`](PROVENANCE.md) and [`NOTICE`](NOTICE).
 
-Clip Studio can also publish rendered clips through the official **Postiz Public API**: load connected channels, choose Instagram/YouTube/TikTok/Facebook or another Postiz integration, upload the clip, and post it immediately. Configure `PUBLIC_SITE_URL` in deployment for crawlable homepage/About/title routes, canonical URLs, Open Graph previews, `robots.txt`, and `sitemap.xml`. This improves discoverability but cannot guarantee Google rankings; submit the sitemap through Google Search Console after deployment.
+See [`TEST_REPORT.md`](TEST_REPORT.md) for the commands executed during verification.
 
-The attached `free-live-classic` package is integrated as the **Live Match Center** at `#/live`. It provides cached ESPN scoreboards, fixtures, local-day navigation, match details, follow alerts while the app is open, and legitimate broadcaster listings. It deliberately does not import unauthorized stream-finder bridges or re-stream sports channels. See [`docs/LIVE-SECTION.md`](docs/LIVE-SECTION.md).
-
-The latest Live Match Center update also supports **targeted closed-app Web Push alerts**. When VAPID push is configured and a user enables notifications, the server stores that browser’s followed match/team list and sends goal, kick-off, half-time, full-time, postponed, and reminder alerts only to that subscription. Without VAPID configuration, the feature safely falls back to in-page alerts.
-
-For movie playback and downloads, the gateway now preserves all resolver mirrors and their provider headers. If one allowed source is expired, blocked, or temporarily unavailable, the player and offline downloader try the next resolver mirror before requesting a fresh resolution. This improves reliability without bypassing a source’s access controls.
-
-### VLC-style player controls
-
-The player includes volume and mute, visual brightness, Fit/Fill sizing, fullscreen, Picture-in-Picture, keyboard shortcuts (`Space`, `F`, and `M`), and Screen Wake Lock through the browser. Wake Lock prevents supported devices from dimming or locking while the user is watching; the operating system may still release it for battery or policy reasons. A website cannot change Android or iOS hardware brightness directly, so the brightness control adjusts the video’s visual brightness instead.
-
-### Captions
-
-MovieBox captions come from the same resolved MovieBox resource and episode, including sibling audio/dub IDs when the upstream service provides them. The adapter keeps the raw subject ID separate from the provider-qualified web ID, deduplicates language tracks, preserves the original caption URLs behind short-lived tokens, and exposes browser-native language selection. It does not mix a subtitle from a different title or episode. Timing remains the source provider’s responsibility; the browser consumes the provider’s WebVTT/SRT track against the exact stream resource.
-
-## API contract
-
-The private sidecar exposes `/health`, `/search`, `/title/:id`, and `POST /resolve`. The public Fastify gateway exposes the corresponding `/api/*` routes and retains the existing short-lived stream proxy.
-
-## Provenance
-
-Upstream MIT and Apache-2.0 license files are included. See `PROVENANCE.md` for the pinned commit and `NOTICE` for attribution.
-
-## Verification
-
-See `TEST_REPORT.md`; it lists only commands actually executed in the development environment. The Render image uses the same release build path and exposes `/api/health` as its health check.
+<div align="center">
+  <br>
+  <sub>Built for people who want the moment—not another maze of tools.</sub>
+  <br><br>
+  <a href="https://github.com/brianlexyl03-hash/free-heart/issues">Report an issue</a> ·
+  <a href="https://github.com/brianlexyl03-hash/free-heart/discussions">Join the discussion</a> ·
+  <a href="https://github.com/brianlexyl03-hash/free-heart">Star the repository</a>
+</div>

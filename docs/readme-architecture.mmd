@@ -1,0 +1,16 @@
+flowchart LR
+  U[Viewer / Creator] --> P[PWA shell\nSearch · Player · Downloads]
+  P --> C[Clip Studio\nTrim · captions · offline edits]
+  P --> L[Live Match Center\nScores · follows · alerts]
+  P --> G[Fastify gateway\nRate limits · tokens · SEO]
+  G --> R[Rust media core\nProvider adapter · mirror candidates]
+  G --> A[AI connectors\nOpenAI-compatible · Gemini · Claude · local models]
+  G --> S[Official publishing\nPostiz · n8n · platform APIs]
+  G --> E[ESPN public scoreboard\nCached with stale fallback]
+  C --> O[OPFS / IndexedDB\nPrivate offline queue]
+  classDef user fill:#171c39,stroke:#9aa9ff,color:#fff
+  classDef app fill:#24183d,stroke:#ff75b7,color:#fff
+  classDef service fill:#0f3034,stroke:#54e0c2,color:#fff
+  class U user
+  class P,C,L,O app
+  class G,R,A,S,E service
