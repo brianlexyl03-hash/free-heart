@@ -1,4 +1,4 @@
-const V = 'free-shell-v8';
+const V = 'free-shell-v9';
 const SHELL = ['/', '/app.js', '/player.js', '/clipper.js', '/ai-connectors.js', '/postiz.js', '/maturity.js', '/styles.css', '/live.js', '/live.css', '/live-config.js', '/manifest.webmanifest', '/icon.svg'];
 const DB_NAME = 'free-downloads-v1';
 const STORE = 'tasks';

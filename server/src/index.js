@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.js';
 import { registerLiveScores } from './live-scores.js';
-import { registerPushRoutes } from './push-notifications.js';
+import { registerLiveAlerts, startLiveAlerts } from './live-alerts.js';
+import { hasSubscription, registerPushRoutes, sendToEndpoint } from './push-notifications.js';
 import { startAutomaticPush } from './auto-push.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +31,8 @@ await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
 
 registerPushRoutes(app);
 registerLiveScores(app);
+registerLiveAlerts(app, { hasSubscription });
+startLiveAlerts({ sendTo: sendToEndpoint, log: app.log });
 
 app.get('/google30f58f739b375061.html', async (_req, reply) => {
   return reply

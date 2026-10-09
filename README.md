@@ -60,6 +60,8 @@ Clip Studio can also publish rendered clips through the official **Postiz Public
 
 The attached `free-live-classic` package is integrated as the **Live Match Center** at `#/live`. It provides cached ESPN scoreboards, fixtures, local-day navigation, match details, follow alerts while the app is open, and legitimate broadcaster listings. It deliberately does not import unauthorized stream-finder bridges or re-stream sports channels. See [`docs/LIVE-SECTION.md`](docs/LIVE-SECTION.md).
 
+The latest Live Match Center update also supports **targeted closed-app Web Push alerts**. When VAPID push is configured and a user enables notifications, the server stores that browser’s followed match/team list and sends goal, kick-off, half-time, full-time, postponed, and reminder alerts only to that subscription. Without VAPID configuration, the feature safely falls back to in-page alerts.
+
 For movie playback and downloads, the gateway now preserves all resolver mirrors and their provider headers. If one allowed source is expired, blocked, or temporarily unavailable, the player and offline downloader try the next resolver mirror before requesting a fresh resolution. This improves reliability without bypassing a source’s access controls.
 
 ### VLC-style player controls

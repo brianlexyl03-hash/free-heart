@@ -32,6 +32,7 @@ const S = {
   followM: new Set(load(K.matches, [])),
   followT: new Map(load(K.teams, [])),   // teamId -> {name, logo}
   proxyMissing: false,
+  serverAlerts: false,            // true when the server is pushing alerts for us (closed-app Web Push)
   openId: null,
 };
 let ctl = null, timer = 0, tick = 0, mounted = false, root = null;
@@ -128,7 +129,23 @@ async function loadDay(force = false) {
 
 // ---------- follow + notifications ----------
 const isFollowing = (m) => S.followM.has(m.id) || S.followT.has(m.home.id) || S.followT.has(m.away.id);
-const persistFollow = () => { save(K.matches, [...S.followM]); save(K.teams, [...S.followT]); };
+const persistFollow = () => { save(K.matches, [...S.followM]); save(K.teams, [...S.followT]); syncFollows(); };
+
+// Tell the server what this browser follows so it can push alerts when the app is closed.
+// Needs the site's Web Push to be enabled (push-notifications.js + VAPID keys); otherwise alerts stay in-page.
+async function syncFollows() {
+  try {
+    if (!('PushManager' in window) || !('Notification' in window) || Notification.permission !== 'granted' || !navigator.serviceWorker) { S.serverAlerts = false; return; }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager?.getSubscription();
+    if (!sub) { S.serverAlerts = false; return; }
+    const post = (u, b) => fetch(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b), cache: 'no-store' });
+    const body = { endpoint: sub.endpoint, matches: [...S.followM], teams: [...S.followT.keys()] };
+    let r = await post('/api/live/follow', body);
+    if (r.status === 404) { await post('/api/push/subscribe', { subscription: sub.toJSON() }); r = await post('/api/live/follow', body); } // server forgot us (restart): re-register
+    S.serverAlerts = r.ok && (S.followM.size + S.followT.size > 0);
+  } catch { S.serverAlerts = false; }
+}
 
 async function askPermission() {
   if (!('Notification' in window)) return 'unsupported';
@@ -138,6 +155,7 @@ async function askPermission() {
 }
 async function notify(title, body, tag) {
   toast(`${title}${body ? ` — ${body}` : ''}`);
+  if (S.serverAlerts) return;   // the server's push shows the system notification; avoid showing it twice
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const opts = { body, tag, icon: '/icon-192.png', badge: '/icon-192.png', data: { url: '/#/live' }, renotify: true };
   try {   // Android Chrome only allows notifications through the service worker
@@ -331,6 +349,7 @@ async function onSheetClick(e) {
 
 // ---------- follow actions ----------
 async function ensureAlerts() {
+  try { if (window.FreeHeartPush?.enablePush) { await window.FreeHeartPush.enablePush(); await syncFollows(); if (S.serverAlerts || Notification.permission === 'granted') return true; } } catch { /* push not configured: fall back to in-page alerts */ }
   const p = await askPermission();
   if (p === 'granted') return true;
   toast(p === 'denied' ? 'Notifications are blocked in your browser settings. You will still see in-app alerts while this page is open.' : p === 'unsupported' ? 'This browser has no notifications. You will see in-app alerts while this page is open.' : 'Notifications not enabled. You will see in-app alerts while this page is open.', 5200);
@@ -409,11 +428,12 @@ function mount() {
   root.addEventListener('input', onInput, o);
   root.addEventListener('change', onInput, o);
   document.addEventListener('keydown', onKey, o);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(true); }, o);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(true); syncFollows(); } }, o);
   addEventListener('online', () => { S.offline = false; refresh(true); }, o);
   addEventListener('offline', () => { S.offline = true; renderFoot(); }, o);
   tick = setInterval(() => { renderFoot(); root.querySelectorAll('[data-count]').forEach((n) => { n.textContent = countdown(n.dataset.count); }); }, 15000);
   S.firstLoad = !S.pool.size;
+  syncFollows();
   renderAll();
   refresh(true).then(schedule);
 }

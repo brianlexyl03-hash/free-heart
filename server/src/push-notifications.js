@@ -76,4 +76,29 @@ export async function sendToAll({ title, body, url, image, tag }) {
   return { ok: true, sent, failed, removed };
 }
 
+// Targeted delivery for features such as followed live matches. The endpoint
+// must already be registered through /api/push/subscribe; callers cannot inject
+// an arbitrary Web Push subscription here.
+export function hasSubscription(endpoint) {
+  return read().some((item) => item.endpoint === endpoint && item.enabled);
+}
+
+export async function sendToEndpoint(endpoint, { title, body, url, image, tag }) {
+  const items = read();
+  const item = items.find((entry) => entry.endpoint === endpoint && entry.enabled);
+  if (!item) return { ok: false, gone: true };
+  try {
+    await webpush.sendNotification(item.subscription, JSON.stringify({ title, body, url, image, tag }));
+    item.lastSentAt = Date.now();
+    write(items);
+    return { ok: true };
+  } catch (error) {
+    if (error.statusCode === 404 || error.statusCode === 410) {
+      item.enabled = false;
+      write(items);
+      return { ok: false, gone: true };
+    }
+    return { ok: false, error: error.statusCode || 'error' };
+  }
+}
 

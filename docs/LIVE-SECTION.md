@@ -23,12 +23,20 @@ It fetches ESPN's public scoreboard once per league per ~15 s (5 min for older/f
 simultaneous users, serves the last good answer for up to 30 min if ESPN fails, and validates every parameter. One browser
 refresh = one request. If the route is missing the page falls back to calling ESPN directly.
 
-## Notifications — honest limits
+## Notifications
 
-* Alerts fire while the app is open (including in a background tab/PWA window). Closed-app push needs a push server with
-  VAPID keys, which is **not** part of this package.
-* On Android, alerts go through the service worker (Chrome blocks `new Notification()` there).
-* If notifications are blocked, the same alerts appear as in-app toasts.
+* **App open:** alerts appear in-page and as system notifications (through the service worker, which Android requires).
+* **App closed (Web Push):** if the site's push is enabled (`push-notifications.js` + `VAPID_*` env on the server), following a
+  match or team also registers it with the server (`POST /api/live/follow`). `server/src/live-alerts.js` polls the cached
+  scoreboards every 20 s and sends goal, kick-off, half-time, full-time, postponed and 15-minute-reminder alerts **only to the
+  subscriptions that follow that match or team** (via the new `sendToEndpoint` added to `push-notifications.js`). The existing
+  `sendToAll` recommendation pushes are untouched.
+* The browser re-sends its follow list every time it opens, so a server restart or redeploy loses nothing for long. The
+  poller runs only while the server process is awake — on a free Render plan that means the keep-alive ping must keep the
+  service running, otherwise closed-app alerts pause while it sleeps.
+* If push is not set up, or notifications are blocked, alerts stay in-page. When server push is active the page shows a toast
+  and lets the push show the system notification, so you never get the same alert twice.
+* The league list is duplicated in `web/live-config.js` and `server/src/live-alerts.js` (`LEAGUES`); edit both if you change it.
 
 ## Data source
 
