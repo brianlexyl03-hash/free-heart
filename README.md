@@ -255,3 +255,53 @@ See [`TEST_REPORT.md`](TEST_REPORT.md) for the commands executed during verifica
   <a href="https://free-heart.de.deplexo.com">Website</a> |
   <a href="https://github.com/brianlexyl03-hash/free-heart">Repo</a>
 </p>
+
+---
+
+## Showcase
+
+<p align="center">
+  <a href="https://free-heart.de.deplexo.com"><b>Open free-heart: free-heart.de.deplexo.com</b></a>
+</p>
+
+**Watch it. Save it. Shape the moment.** A mobile-first PWA for discovery, playback, offline saves, Clip Studio and a Live Match Center.
+
+### Stories
+
+<p align="center">
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/story1_watch_clip.png" width="30%" alt="Watch it. Save it. Shape the moment."></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/story2_clip_studio.png" width="30%" alt="Turn any moment into a short."></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/story3_live_match.png" width="30%" alt="Never miss matchday."></a>
+</p>
+
+### How it works (notebook)
+
+<p align="center">
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post1_notebook_1.png" width="24%" alt="free-heart"></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post1_notebook_2.png" width="24%" alt="How it works"></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post1_notebook_3.png" width="24%" alt="Make it yours"></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post1_notebook_4.png" width="24%" alt="Try it now"></a>
+</p>
+
+### Why try it (sticky notes)
+
+<p align="center">
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post2_sticky_1.png" width="24%" alt="Why try free-heart"></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post2_sticky_2.png" width="24%" alt="Make shorts fast"></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post2_sticky_3.png" width="24%" alt="Never miss matchday"></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post2_sticky_4.png" width="24%" alt="Your turn"></a>
+</p>
+
+### Clip it in 4 steps (chalkboard)
+
+<p align="center">
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post3_chalk_1.png" width="24%" alt="Clip it in 4 steps"></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post3_chalk_2.png" width="24%" alt="Step 1 and 2"></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post3_chalk_3.png" width="24%" alt="Step 3 and 4"></a>
+  <a href="https://free-heart.de.deplexo.com"><img src="docs/ads/posts/post3_chalk_4.png" width="24%" alt="Start clipping"></a>
+</p>
+
+<p align="center">
+  <a href="https://free-heart.de.deplexo.com">Website</a> |
+  <a href="https://github.com/brianlexyl03-hash/free-heart">Repo</a>
+</p>
