@@ -45,7 +45,7 @@ def card(name,headline,sub,bullets,cta):
         d.text((150,y+26),"+  "+b,font=f(B,40),fill=(255,255,255)); y+=116
     d.rounded_rectangle([140,y+30,W-140,y+160],radius=65,fill=(255,255,255))
     center(d,cta,y+62,f(B,54),(30,35,39))
-    center(d,"Link in bio  |  github.com/brianlexyl03-hash/free-heart",y+210,f(R,28),(255,225,238))
+    center(d,"Link in bio  |  free-heart.de.deplexo.com",y+210,f(R,28),(255,225,238))
     im.save(os.path.join(os.path.dirname(os.path.abspath(__file__)),name))
 card("story1_watch_clip.png","Watch it. Save it. Shape the moment.","A mobile-first PWA for stories worth watching.",["Resilient playback","Offline downloads","Install it like an app"],"Try free-heart")
 card("story2_clip_studio.png","Turn any moment into a short.","Trim 1-60 second clips right inside the app.",["Clip Studio built in","AI captions + hashtags","Share in one tap"],"Open Clip Studio")
