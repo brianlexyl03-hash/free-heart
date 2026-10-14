@@ -161,6 +161,8 @@ function mint(url, headers = {}) {
   tokens.set(t, { url, headers: h, exp: Date.now() + TTL });
   return `/api/stream/${t}`;
 }
+function remuxExt(u) { try { return /\.(mpd|mkv|avi|mov|ts|flv|wmv)$/i.test(new URL(u).pathname); } catch { return false; } }
+function mintFor(url, headers = {}) { const m = mint(url, headers); return remuxExt(url) ? m.replace('/api/stream/', '/api/play/') : m; }
 
 app.get('/api/health', async () => {
   if (!core.enabled()) return { ok: true, core: false };
@@ -272,7 +274,7 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
   req.log.info({ wanted: b.resolution, selected: r.selectedResolution, kind: r.kind, ext: (r.candidates || [{ url: r.url }]).map((c) => { try { return new URL(c.url).pathname.split('.').pop().slice(0, 8); } catch { return '?'; } }) }, 'resolve debug');
   const candidates = (r.candidates || [{ url: r.url, kind: r.kind, headers: r.headers }]).map((candidate) => ({
     kind: candidate.kind,
-    stream: mint(candidate.url, candidate.headers),
+    stream: mintFor(candidate.url, candidate.headers),
   }));
   return {
     kind: r.kind,
@@ -377,6 +379,39 @@ app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1
   const stream = Readable.fromWeb(r.body);
   stream.on('error', () => { try { reply.raw.destroy(); } catch {} });
   return reply.send(stream);
+});
+
+let ffOk = null;
+let ffActive = 0;
+async function hasFfmpeg() {
+  if (ffOk === null) { const { spawnSync } = await import('node:child_process'); ffOk = spawnSync('ffmpeg', ['-version']).status === 0; }
+  return ffOk;
+}
+app.get('/api/play/:token', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+  const { token } = z.object({ token: z.string().regex(/^[\w-]{20,40}$/) }).parse(req.params);
+  const e = tokens.get(token);
+  if (!e || e.exp < Date.now()) return reply.code(404).send({ error: 'expired', message: 'Stream link expired' });
+  if (!(await hasFfmpeg())) return reply.code(501).send({ error: 'no_ffmpeg', message: 'This source needs the converter, which is not installed on the server yet.' });
+  if (ffActive >= 2) return reply.code(503).send({ error: 'busy', message: 'The converter is busy. Try again in a moment.' });
+  e.exp = Date.now() + TTL;
+  const { spawn } = await import('node:child_process');
+  const hdrs = e.headers || {};
+  const ua = hdrs['user-agent'] || hdrs['User-Agent'] || 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36';
+  const extra = Object.entries(hdrs).filter(([k]) => k.toLowerCase() !== 'user-agent').map(([k, v]) => `${k}: ${v}`).join('\r\n');
+  const args = ['-hide_banner', '-loglevel', 'error', '-user_agent', ua];
+  if (extra) args.push('-headers', extra + '\r\n');
+  args.push('-i', e.url, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1');
+  const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] });
+  ffActive += 1;
+  let done = false;
+  const end = () => { if (!done) { done = true; ffActive -= 1; } try { ff.kill('SIGKILL'); } catch {} };
+  ff.on('error', end);
+  ff.on('close', (code) => { if (code) req.log.warn({ code }, 'ffmpeg exit'); end(); });
+  reply.raw.on('close', end);
+  reply.header('content-type', 'video/mp4');
+  reply.header('cache-control', 'no-store');
+  reply.header('x-accel-buffering', 'no');
+  return reply.send(ff.stdout);
 });
 
 function htmlEscape(value) {
