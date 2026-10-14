@@ -13,7 +13,7 @@ export class CoreBadResponse extends Error {
 const Item = z.object({
   id: z.string(), title: z.string(),
   year: z.union([z.string(), z.number()]).nullish(),
-  poster: z.string().url().nullish(), type: z.string().nullish(),
+  poster: z.string().nullish(), type: z.string().nullish(),
 });
 const Search = z.object({ results: z.array(Item), page: z.number().optional(), hasMore: z.boolean().optional() });
 const Title = Item.extend({
@@ -101,7 +101,7 @@ const parse = (schema, v) => {
   const p = schema.safeParse(v);
   if (!p.success) {
     console.error('core schema mismatch:', p.error.issues.map((x) => `${x.path.join('.') || '(root)'}: ${x.message}`).join(' | '));
-    throw new CoreBadResponse();
+    throw new CoreBadResponse(`Core response schema mismatch: ${p.error.issues.map((x) => `${x.path.join('.') || '(root)'}: ${x.message}`).join(' | ')}`);
   }
   return p.data;
 };
