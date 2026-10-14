@@ -270,7 +270,13 @@ app.get('/api/title/:id', async (req) => core.title(Id.parse(req.params.id)));
 
 app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute' } } }, async (req) => {
   const b = z.object({ id: Id, episode: z.string().max(64).optional(), resolution: Resolution.nullish() }).parse(req.body);
-  const r = await core.resolve(b.id, b.episode, b.resolution ?? undefined);
+  let r;
+  try { r = await core.resolve(b.id, b.episode, b.resolution ?? undefined); } catch (err) {
+    const clean = (v) => String(v || '').replace(/https?:\/\/\S+/g, '[url]').slice(0, 400);
+    lastErrors.unshift({ at: new Date().toISOString(), name: err?.name, status: err?.statusCode || err?.status, message: clean(err?.message), kind: err?.kind, cause: clean(err?.cause?.message || err?.cause) });
+    lastErrors.length = Math.min(lastErrors.length, 8);
+    throw err;
+  }
   req.log.info({ wanted: b.resolution, selected: r.selectedResolution, kind: r.kind, ext: (r.candidates || [{ url: r.url }]).map((c) => { try { return new URL(c.url).pathname.split('.').pop().slice(0, 8); } catch { return '?'; } }) }, 'resolve debug');
   const candidates = (r.candidates || [{ url: r.url, kind: r.kind, headers: r.headers }]).map((candidate) => ({
     kind: candidate.kind,
@@ -482,6 +488,8 @@ app.get('/news', async (req, reply) => {
   const cards = data.items.map((i) => `<a href="${htmlEscape(i.link)}" target="_blank" rel="noopener noreferrer" style="display:flex;gap:12px;margin:12px 0;text-decoration:none;color:inherit">${i.image ? `<img src="${htmlEscape(i.image)}" alt="" width="120" height="68" style="object-fit:cover;border-radius:8px">` : ''}<span><b>${htmlEscape(i.title)}</b><br><small>${htmlEscape(i.summary)}</small></span></a>`).join('') || '<p>News is unavailable right now. Try again shortly.</p>';
   reply.type('text/html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Football news | free-heart</title><body style="font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:16px;line-height:1.35"><h1>Football news</h1><p style="display:flex;flex-wrap:wrap;gap:8px">${tabs}</p>${cards}<p><small>Headlines from ${htmlEscape(data.source)}. Tap one to read the full story on their site.</small></p><p><a href="/">Back to free-heart</a></p></body>`);
 });
+const lastErrors = [];
+app.get('/api/last-error', async () => ({ errors: lastErrors }));
 function htmlEscape(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
