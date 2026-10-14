@@ -346,7 +346,24 @@ app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1
   let lastErr = '';
   for (let attempt = 0; attempt < 2 && !ac.signal.aborted; attempt += 1) {
     try {
-      r = await fetch(e.url, { headers, signal: AbortSignal.any([ac.signal, AbortSignal.timeout(20000)]), redirect: 'follow' });
+      const attemptController = new AbortController();
+      const upstreamTimeout = setTimeout(() => {
+        attemptController.abort(
+          new DOMException('Upstream response headers timed out', 'TimeoutError')
+        );
+      }, 20000);
+
+      try {
+        r = await fetch(e.url, {
+          headers,
+          signal: AbortSignal.any([ac.signal, attemptController.signal]),
+          redirect: 'follow'
+        });
+      } finally {
+        // Limit the timeout to connecting and receiving response headers.
+        // Do not abort a healthy response while its video body is streaming.
+        clearTimeout(upstreamTimeout);
+      }
       if (r.ok || (r.status >= 400 && r.status < 500 && r.status !== 429 && r.status !== 408)) break;
       lastStatus = r.status;
       try { await r.body?.cancel(); } catch {}
