@@ -414,6 +414,57 @@ app.get('/api/play/:token', { config: { rateLimit: { max: 60, timeWindow: '1 min
   return reply.send(ff.stdout);
 });
 
+let clipFf = null; let clipActive = 0;
+async function clipHasFfmpeg() { if (clipFf === null) { const { spawnSync } = await import('node:child_process'); clipFf = spawnSync('ffmpeg', ['-version']).status === 0; } return clipFf; }
+app.get('/api/clip/:token', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
+  const { token } = z.object({ token: z.string().regex(/^[\w-]{20,40}$/) }).parse(req.params);
+  const q = z.object({ start: z.coerce.number().min(0).max(86400), dur: z.coerce.number().min(1).max(60) }).parse(req.query);
+  const e = tokens.get(token);
+  if (!e || e.exp < Date.now()) return reply.code(404).send({ error: 'expired', message: 'Stream link expired' });
+  if (!(await clipHasFfmpeg())) return reply.code(501).send({ error: 'no_ffmpeg', message: 'The clip cutter is not installed on the server yet.' });
+  if (clipActive >= 2) return reply.code(503).send({ error: 'busy', message: 'The clip cutter is busy. Try again in a moment.' });
+  const { spawn } = await import('node:child_process');
+  const h = e.headers || {};
+  const ua = h['user-agent'] || h['User-Agent'] || 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36';
+  const extra = Object.entries(h).filter(([k]) => k.toLowerCase() !== 'user-agent').map(([k, v]) => `${k}: ${v}`).join('\r\n');
+  const args = ['-hide_banner', '-loglevel', 'error', '-user_agent', ua];
+  if (extra) args.push('-headers', extra + '\r\n');
+  args.push('-ss', String(q.start), '-i', e.url, '-t', String(q.dur), '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1');
+  const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] });
+  clipActive += 1; let done = false;
+  const end = () => { if (!done) { done = true; clipActive -= 1; } try { ff.kill('SIGKILL'); } catch {} };
+  const guard = setTimeout(end, 120000);
+  ff.on('error', end); ff.on('close', () => { clearTimeout(guard); end(); }); reply.raw.on('close', end);
+  reply.header('content-type', 'video/mp4'); reply.header('content-disposition', 'attachment; filename="clip.mp4"'); reply.header('cache-control', 'no-store');
+  return reply.send(ff.stdout);
+});
+const NEWS_FEEDS = { football: 'football', 'premier-league': 'football/premier-league', 'champions-league': 'football/champions-league', european: 'football/european', womens: 'football/womens' };
+const newsCache = new Map();
+function xmlText(v) { return String(v || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim(); }
+async function footballNews(feed) {
+  const key = NEWS_FEEDS[feed] ? feed : 'football';
+  const hit = newsCache.get(key); if (hit && hit.t > Date.now() - 300000) return hit.v;
+  const r = await fetch(`https://feeds.bbci.co.uk/sport/${NEWS_FEEDS[key]}/rss.xml`, { headers: { 'user-agent': 'Mozilla/5.0 free-heart-news' }, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error('news source returned ' + r.status);
+  const xml = await r.text();
+  const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, 30).map((m) => {
+    const pick = (t) => (m[1].match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`)) || [])[1];
+    const img = (m[1].match(/<media:thumbnail[^>]*url="([^"]+)"/) || [])[1] || '';
+    return { title: xmlText(pick('title')), summary: xmlText(pick('description')), link: xmlText(pick('link')), published: xmlText(pick('pubDate')), image: img };
+  }).filter((i) => i.title && /^https:\/\//.test(i.link));
+  const v = { source: 'BBC Sport', feed: key, items };
+  newsCache.set(key, { t: Date.now(), v }); return v;
+}
+app.get('/api/football-news', async (req, reply) => {
+  try { return await footballNews(String(req.query?.feed || 'football')); } catch (err) { return reply.code(502).send({ error: 'news_unavailable', message: 'Football news is unavailable right now. Try again shortly.' }); }
+});
+app.get('/news', async (req, reply) => {
+  const feed = String(req.query?.feed || 'football');
+  let data; try { data = await footballNews(feed); } catch { data = { source: 'BBC Sport', feed, items: [] }; }
+  const tabs = Object.keys(NEWS_FEEDS).map((k) => `<a href="/news?feed=${k}" style="padding:6px 12px;border-radius:99px;border:1px solid #888;text-decoration:none;color:inherit;${k === data.feed ? 'background:#d6303e;color:#fff;border-color:#d6303e;' : ''}">${k}</a>`).join(' ');
+  const cards = data.items.map((i) => `<a href="${htmlEscape(i.link)}" target="_blank" rel="noopener noreferrer" style="display:flex;gap:12px;margin:12px 0;text-decoration:none;color:inherit">${i.image ? `<img src="${htmlEscape(i.image)}" alt="" width="120" height="68" style="object-fit:cover;border-radius:8px">` : ''}<span><b>${htmlEscape(i.title)}</b><br><small>${htmlEscape(i.summary)}</small></span></a>`).join('') || '<p>News is unavailable right now. Try again shortly.</p>';
+  reply.type('text/html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Football news | free-heart</title><body style="font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:16px;line-height:1.35"><h1>Football news</h1><p style="display:flex;flex-wrap:wrap;gap:8px">${tabs}</p>${cards}<p><small>Headlines from ${htmlEscape(data.source)}. Tap one to read the full story on their site.</small></p><p><a href="/">Back to free-heart</a></p></body>`);
+});
 function htmlEscape(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
