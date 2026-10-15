@@ -400,8 +400,9 @@ export function mountPlayer(host, opts) {
   async function retry(auto) {
     errBox.hidden = true; spinner.hidden = false;
     try {
-      const next = opts.onRetry ? await opts.onRetry() : null;
+      const next = opts.onRetry ? await opts.onRetry(auto) : null;
       if (next?.src) { setSource(next.src, { startAt: video.currentTime || startAt, tracks: next.tracks }); return; }
+      if (auto) { showError(await explain()); return; }
       video.load();
     } catch (e) { showError(e.message || 'Could not refresh the stream.'); }
   }
@@ -459,7 +460,7 @@ export function mountPlayer(host, opts) {
     });
   }
   function setSource(next, o = {}) {
-    src = next; startAt = o.startAt || 0;
+    src = next; startAt = o.startAt || 0; autoRetried = false;
     if (o.tracks) tracks = o.tracks;
     if (o.qualities) qualities = o.qualities;
     if ('selectedQuality' in o) qualitySel = o.selectedQuality;

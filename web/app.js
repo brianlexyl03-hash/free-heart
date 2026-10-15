@@ -422,13 +422,14 @@ async function watchPage(id, episode) {
       },
       onQuality: switchQuality,
       onClip: (video) => mountClipEditor(document.getElementById('clip-editor'), { video, title }),
-      onRetry: async () => {
+      onRetry: async (automatic = false) => {
         const candidates = resolved.candidates || [];
         if (candidateIndex + 1 < candidates.length) {
           candidateIndex += 1;
           const next = candidates[candidateIndex];
           return { src: next.stream, tracks: subs(resolved) };
         }
+        if (automatic) return null;
         resolved = await resolveStream(id, episode, res);
         candidateIndex = 0;
         return { src: resolved.stream, tracks: subs(resolved) };
