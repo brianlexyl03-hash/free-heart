@@ -1,3 +1,5 @@
+mod addon_sources;
+
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -9,7 +11,7 @@ use moviebox_tui::{
     providers::{
         ReleaseProvider,
         models::{
-            CatalogItem, MediaDetails, MediaType, ProviderError, ProviderKind, Release,
+            CatalogItem, MediaDetails, MediaType, ProviderError, ProviderKind, ProviderMediaId, Release,
             SourceMirror,
         },
     },
@@ -222,6 +224,7 @@ async fn provider_releases(
     subject_id: &str,
     season: usize,
     episode: usize,
+    is_series: bool,
 ) -> Result<Vec<Release>, ProviderError> {
     match provider {
         ProviderKind::MovieBox => {
@@ -243,6 +246,25 @@ async fn provider_releases(
             .episode_streams(subject_id, season, episode)
             .await
             .map_err(ProviderError::from),
+        ProviderKind::Addons => {
+            let configured = moviebox_tui::config::load_addons();
+            let (releases, _blocked_sources) = moviebox_tui::providers::addons::aggregate_streams(
+                &service.addon_client,
+                &configured,
+                subject_id,
+                season,
+                episode,
+                is_series,
+            )
+            .await;
+            if releases.is_empty() {
+                Err(ProviderError::Unavailable(format!(
+                    "No direct HTTP/HLS stream was returned by configured add-ons for {subject_id}"
+                )))
+            } else {
+                Ok(releases)
+            }
+        }
         _ => Err(ProviderError::Unavailable(format!(
             "{provider} playback is not enabled for the web adapter"
         ))),
@@ -279,6 +301,65 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
+fn is_open_film_demo_query(query: &str) -> bool {
+    let q = query.to_ascii_lowercase();
+    q.contains("big buck bunny") || q.contains("open film demo") || q.trim() == "stream test"
+}
+
+fn public_domain_demo_catalog_item() -> CatalogItem {
+    CatalogItem {
+        id: ProviderMediaId {
+            provider: ProviderKind::Addons,
+            value: "movie:tt1254207".to_string(),
+        },
+        title: "Big Buck Bunny — Open-Licensed Playback Test".to_string(),
+        media_type: MediaType::Movie,
+        year: Some("2008".to_string()),
+        poster_url: Some("https://live.metahub.space/poster/small/tt1254207/img".to_string()),
+        season_count: None,
+    }
+}
+
+fn public_domain_demo_title(id: &str) -> TitleResponse {
+    TitleResponse {
+        id: id.to_string(),
+        title: "Big Buck Bunny — Open-Licensed Playback Test".to_string(),
+        year: Some("2008".to_string()),
+        poster: Some("https://live.metahub.space/poster/small/tt1254207/img".to_string()),
+        media_type: "movie",
+        overview: Some("Open-licensed short film by the Blender Foundation, included to test Free Heart playback. Preserve the film's attribution when redistributing.".to_string()),
+        episodes: Vec::new(),
+    }
+}
+
+fn public_domain_demo_release() -> Release {
+    Release {
+        provider: ProviderKind::Addons,
+        filename: "Big Buck Bunny — open-licensed playback test.mp4".to_string(),
+        quality: Some("1080p".to_string()),
+        codec: Some("H.264".to_string()),
+        language: Some("English".to_string()),
+        size_bytes: None,
+        season: None,
+        episode: None,
+        mirrors: vec![
+            SourceMirror {
+                label: "Open film demo · Google sample mirror".to_string(),
+                resolver_url: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4".to_string(),
+                headers: Vec::new(),
+                direct_file: true,
+            },
+            SourceMirror {
+                label: "Open film demo · Stremio public-domain mirror".to_string(),
+                resolver_url: "http://distribution.bbb3d.renderfarming.net/video/mp4/bbb_sunflower_1080p_30fps_normal.mp4".to_string(),
+                headers: Vec::new(),
+                direct_file: true,
+            },
+        ],
+        resource_id: None,
+    }
+}
+
 async fn search(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
@@ -288,13 +369,27 @@ async fn search(
         return Err(ApiError::bad_request("q must contain 1–100 characters"));
     }
     let page = query.page.unwrap_or(1).clamp(1, 50);
-    // Search the primary source first, then switch automatically when it has
-    // no results or is unavailable. Provider IDs are preserved in the result.
-    let providers = [
+
+    // A known open-licensed test film gives us a deterministic way to verify
+    // the complete browser -> resolve -> tokenized byte-range stream path.
+    if page == 1 && is_open_film_demo_query(q) {
+        return Ok(Json(SearchResponse {
+            results: vec![item_response(public_domain_demo_catalog_item())],
+            page,
+            has_more: false,
+        }));
+    }
+
+    // Search primary providers and add Stremio-compatible streaming add-ons
+    // only when at least one configured stream-capable add-on loaded at boot.
+    let mut providers = vec![
         ProviderKind::MovieBox,
         ProviderKind::FourKHdHub,
         ProviderKind::Dramachi,
     ];
+    if addon_sources::enabled() {
+        providers.push(ProviderKind::Addons);
+    }
     let mut results = Vec::new();
     let mut last_error = None;
     for provider in providers {
@@ -331,6 +426,9 @@ async fn title(
         return Err(ApiError::bad_request("Invalid title id"));
     }
     let (provider, subject_id) = parse_media_id(&id)?;
+    if provider == ProviderKind::Addons && subject_id == "movie:tt1254207" {
+        return Ok(Json(public_domain_demo_title(&id)));
+    }
     let details = state
         .service
         .details_typed(provider, &subject_id)
@@ -378,6 +476,20 @@ fn resolve_candidates(release: &Release) -> Vec<ResolveCandidate> {
         .collect()
 }
 
+fn open_film_demo_resolve_response() -> Option<ResolveResponse> {
+    let candidates = resolve_candidates(&public_domain_demo_release());
+    let first = candidates.first()?;
+    Some(ResolveResponse {
+        url: first.url.clone(),
+        kind: first.kind,
+        headers: first.headers.clone(),
+        candidates,
+        subtitles: Vec::new(),
+        resolutions: vec![1080],
+        selected_resolution: 1080,
+    })
+}
+
 async fn resolve(
     State(state): State<AppState>,
     Json(request): Json<ResolveRequest>,
@@ -387,6 +499,15 @@ async fn resolve(
     }
     let (season, episode) = episode_parts(request.episode.as_deref())?;
     let (provider, subject_id) = parse_media_id(&request.id)?;
+    if provider == ProviderKind::Addons && subject_id == "movie:tt1254207" {
+        return open_film_demo_resolve_response()
+            .map(Json)
+            .ok_or_else(|| ApiError {
+                status: StatusCode::BAD_GATEWAY,
+                kind: "stream_unavailable",
+                message: "The open-film test stream has no usable mirrors".to_string(),
+            });
+    }
     let details = state
         .service
         .details_typed(provider, &subject_id)
@@ -399,9 +520,16 @@ async fn resolve(
             },
             other => ApiError::provider(other),
         })?;
-    let releases = provider_releases(&state.service, provider, &subject_id, season, episode)
-        .await
-        .map_err(ApiError::provider)?;
+    let releases = provider_releases(
+        &state.service,
+        provider,
+        &subject_id,
+        season,
+        episode,
+        details.is_series(),
+    )
+    .await
+    .map_err(ApiError::provider)?;
     let mut resolutions: Vec<u32> = releases
         .iter()
         .map(|release| release.resolution_u64().min(u32::MAX as u64) as u32)
@@ -482,9 +610,12 @@ async fn resolve(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = std::env::var("CORE_BIND").unwrap_or_else(|_| "127.0.0.1:7070".to_string());
     let addr: SocketAddr = bind.parse()?;
-    let state = AppState {
-        service: Arc::new(MovieBoxService::new()),
-    };
+    let service = Arc::new(MovieBoxService::new());
+    let addon_setup_service = Arc::clone(&service);
+    tokio::spawn(async move {
+        addon_sources::configure(&addon_setup_service).await;
+    });
+    let state = AppState { service };
     let app = Router::new()
         .route("/health", get(health))
         .route("/search", get(search))
