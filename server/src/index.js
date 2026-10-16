@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
+import { registerRemux } from './remux.js';
 import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
 import crypto from 'node:crypto';
@@ -161,6 +162,13 @@ function mint(url, headers = {}) {
   tokens.set(t, { url, headers: h, exp: Date.now() + TTL });
   return `/api/stream/${t}`;
 }
+function mintSmart(url, headers, kind, res) {
+  const m = mint(url, headers);
+  let boxed = false;
+  try { boxed = /\.(mkv|avi|mov|ts|flv|wmv|mpd)$/i.test(new URL(url).pathname); } catch {}
+  return kind !== 'hls' && (boxed || Number(res) >= 1080) ? m.replace('/api/stream/', '/api/remux/') : m;
+}
+registerRemux(app, { tokens, TTL });
 function remuxExt(u) { try { return /\.(mpd|mkv|avi|mov|ts|flv|wmv)$/i.test(new URL(u).pathname); } catch { return false; } }
 function mintFor(url, headers = {}) { const m = mint(url, headers); return remuxExt(url) ? m.replace('/api/stream/', '/api/play/') : m; }
 
@@ -280,7 +288,7 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
   req.log.info({ wanted: b.resolution, selected: r.selectedResolution, kind: r.kind, ext: (r.candidates || [{ url: r.url }]).map((c) => { try { return new URL(c.url).pathname.split('.').pop().slice(0, 8); } catch { return '?'; } }) }, 'resolve debug');
   const candidates = (r.candidates || [{ url: r.url, kind: r.kind, headers: r.headers }]).map((candidate) => ({
     kind: candidate.kind,
-    stream: mintFor(candidate.url, candidate.headers),
+    stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r.selectedResolution),
   }));
   return {
     kind: r.kind,
