@@ -5,6 +5,8 @@ pub mod fourkhdhub;
 pub mod models;
 pub mod moviebox;
 pub mod tv;
+pub mod wefeed_short;
+pub mod wefeed_short_adapt;
 
 pub use tv as m3u;
 

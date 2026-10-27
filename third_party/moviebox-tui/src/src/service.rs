@@ -8,6 +8,8 @@ use crate::providers::bdix::dhakaflix::client::DhakaFlixClient;
 use crate::providers::fourkhdhub::FourKHdHubClient;
 use crate::providers::models::{CatalogItem, MediaDetails, ProviderError, ProviderKind};
 use crate::providers::moviebox::client::MovieBoxClient;
+use crate::providers::wefeed_short::WeFeedShortClient;
+use crate::providers::wefeed_short_adapt::{search as wefeed_catalog_search, details as wefeed_catalog_details, releases as wefeed_catalog_releases};
 
 #[derive(Clone)]
 pub struct MovieBoxService {
@@ -17,6 +19,7 @@ pub struct MovieBoxService {
     pub dhakaflix_client: DhakaFlixClient,
     pub addon_client: crate::providers::addons::AddonClient,
     pub dramachi_client: crate::providers::dramachi::DramachiClient,
+    pub wefeed_client: Arc<WeFeedShortClient>,
     pub http_client: reqwest::Client,
 }
 
@@ -40,8 +43,51 @@ impl MovieBoxService {
             dhakaflix_client: DhakaFlixClient::new(),
             addon_client: crate::providers::addons::AddonClient::new(),
             dramachi_client: crate::providers::dramachi::DramachiClient::new(),
+            wefeed_client: Arc::new(WeFeedShortClient::new()),
             http_client,
         }
+    }
+
+    /// Enabled by default; set WEFEED_SHORT_ENABLED=false/0/off/no to turn it off.
+    pub fn wefeed_short_enabled(&self) -> bool {
+        std::env::var("WEFEED_SHORT_ENABLED")
+            .map(|value| !matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"))
+            .unwrap_or(true)
+    }
+
+    /// Search the APK's short-drama catalogue and map it into the existing card model.
+    pub async fn search_wefeed(&self, query: &str, page: usize) -> Result<Vec<CatalogItem>, ProviderError> {
+        if !self.wefeed_short_enabled() {
+            return Ok(Vec::new());
+        }
+        wefeed_catalog_search(&self.wefeed_client, query, page).await
+    }
+
+    /// Resolve details for a namespaced ID. The caller may pass either the raw ID
+    /// or `wefeedshort~<id>`; the returned MediaDetails always keeps that prefix.
+    pub async fn details_wefeed(&self, namespaced_or_raw_id: &str) -> Result<MediaDetails, ProviderError> {
+        let source_id = namespaced_or_raw_id.strip_prefix("wefeedshort~")
+            .unwrap_or(namespaced_or_raw_id);
+        if source_id.trim().is_empty() {
+            return Err(ProviderError::NotFound);
+        }
+        wefeed_catalog_details(&self.wefeed_client, namespaced_or_raw_id).await
+    }
+
+    /// Return directly supplied media URLs for the selected short-drama episode.
+    /// No URL is fabricated when the provider returns metadata without playback.
+    pub async fn wefeed_episode_streams(
+        &self,
+        namespaced_or_raw_id: &str,
+        season: usize,
+        episode: usize,
+    ) -> Result<Vec<crate::providers::models::Release>, ProviderError> {
+        let source_id = namespaced_or_raw_id.strip_prefix("wefeedshort~")
+            .unwrap_or(namespaced_or_raw_id);
+        if source_id.trim().is_empty() {
+            return Err(ProviderError::NotFound);
+        }
+        wefeed_catalog_releases(&self.wefeed_client, namespaced_or_raw_id, season, episode).await
     }
 
     pub fn capabilities(&self, provider: ProviderKind) -> crate::providers::ProviderCapabilities {

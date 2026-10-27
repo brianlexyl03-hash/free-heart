@@ -226,6 +226,10 @@ async fn provider_releases(
     episode: usize,
     is_series: bool,
 ) -> Result<Vec<Release>, ProviderError> {
+    if provider == ProviderKind::MovieBox && subject_id.starts_with("wefeedshort~") {
+        return service.wefeed_episode_streams(subject_id, season, episode).await;
+    }
+
     match provider {
         ProviderKind::MovieBox => {
             service
@@ -390,27 +394,44 @@ async fn search(
     if addon_sources::enabled() {
         providers.push(ProviderKind::Addons);
     }
+    // Query all enabled providers concurrently instead of serially.
+    let search_results = futures::future::join_all(
+        providers.iter().map(|provider| state.service.search_typed(*provider, q, page)),
+    ).await;
     let mut results = Vec::new();
     let mut last_error = None;
-    for provider in providers {
-        match state.service.search_typed(provider, q, page).await {
-            Ok(mut items) => results.append(&mut items),
+    let mut has_more = false;
+    for result in search_results {
+        match result {
+            Ok(mut items) => { has_more |= items.len() >= 15; results.append(&mut items); }
             Err(error) => last_error = Some(error),
         }
     }
-    if results.is_empty() {
-        if let Some(error) = last_error {
-            return Err(ApiError::provider(error));
+
+    // WeFeed Short is optional: an upstream failure must not break other search providers.
+    if state.service.wefeed_short_enabled() {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(7),
+            state.service.search_wefeed(q, page),
+        ).await {
+            Ok(Ok(mut items)) => {
+                    has_more |= items.len() >= 15;
+                results.append(&mut items);
+            }
+            Ok(Err(error)) => eprintln!("WeFeed Short search skipped: {error}"),
+            Err(_) => eprintln!("WeFeed Short search timed out"),
         }
-        return Ok(Json(SearchResponse {
-            results: Vec::new(),
-            page,
-            has_more: false,
-        }));
     }
+
+    if results.is_empty() {
+        if let Some(error) = last_error { return Err(ApiError::provider(error)); }
+        return Ok(Json(SearchResponse { results: Vec::new(), page, has_more: false }));
+    }
+    // Deduplicate by provider-aware ID before sorting; alphabetical sorting
+    // does not guarantee duplicate entries are adjacent.
+    let mut seen_ids = std::collections::HashSet::new();
+    results.retain(|item| seen_ids.insert(item.id.clone()));
     results.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
-    results.dedup_by(|left, right| left.id == right.id);
-    let has_more = results.len() >= 15;
     Ok(Json(SearchResponse {
         results: results.into_iter().map(item_response).collect(),
         page,
@@ -429,10 +450,13 @@ async fn title(
     if provider == ProviderKind::Addons && subject_id == "movie:tt1254207" {
         return Ok(Json(public_domain_demo_title(&id)));
     }
-    let details = state
-        .service
-        .details_typed(provider, &subject_id)
-        .await
+    let details = (if provider == ProviderKind::MovieBox
+            && subject_id.starts_with("wefeedshort~")
+        {
+            state.service.details_wefeed(&subject_id).await
+        } else {
+            state.service.details_typed(provider, &subject_id).await
+        })
         .map_err(|error| match error {
             ProviderError::NotFound => ApiError {
                 status: StatusCode::NOT_FOUND,
@@ -508,10 +532,13 @@ async fn resolve(
                 message: "The open-film test stream has no usable mirrors".to_string(),
             });
     }
-    let details = state
-        .service
-        .details_typed(provider, &subject_id)
-        .await
+    let details = (if provider == ProviderKind::MovieBox
+            && subject_id.starts_with("wefeedshort~")
+        {
+            state.service.details_wefeed(&subject_id).await
+        } else {
+            state.service.details_typed(provider, &subject_id).await
+        })
         .map_err(|error| match error {
             ProviderError::NotFound => ApiError {
                 status: StatusCode::NOT_FOUND,
@@ -566,7 +593,7 @@ async fn resolve(
     })?;
     let url = first.url.clone();
     let kind = first.kind;
-    let subtitles = if provider == ProviderKind::MovieBox {
+    let subtitles = if provider == ProviderKind::MovieBox && !subject_id.starts_with("wefeedshort~") {
         if let Some(resource_id) = release.resource_id.as_deref() {
             state
                 .service
@@ -611,10 +638,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = std::env::var("CORE_BIND").unwrap_or_else(|_| "127.0.0.1:7070".to_string());
     let addr: SocketAddr = bind.parse()?;
     let service = Arc::new(MovieBoxService::new());
-    let addon_setup_service = Arc::clone(&service);
-    tokio::spawn(async move {
-        addon_sources::configure(&addon_setup_service).await;
-    });
+    // Load configured add-ons before accepting requests; otherwise the first
+    // search can be cached without add-on results for several minutes.
+    addon_sources::configure(&service).await;
     let state = AppState { service };
     let app = Router::new()
         .route("/health", get(health))

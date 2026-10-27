@@ -29,7 +29,7 @@ impl Provider for AddonClient {
         }
     }
 
-    async fn search(&self, query: &str, _page: usize) -> Result<Vec<CatalogItem>, ProviderError> {
+    async fn search(&self, query: &str, page: usize) -> Result<Vec<CatalogItem>, ProviderError> {
         let addons = tokio::task::spawn_blocking(crate::config::load_addons)
             .await
             .unwrap_or_default();
@@ -44,28 +44,34 @@ impl Provider for AddonClient {
             ));
         }
 
-        let mut combined = Vec::new();
-        for addon in catalog_addons {
-            let base_url = Self::base_addon_url(&addon.manifest_url);
-            let (movies_res, series_res) = tokio::join!(
-                self.fetch_catalog_search(&base_url, "movie", "top", query),
-                self.fetch_catalog_search(&base_url, "series", "top", query),
-            );
-            if let Ok(movies) = movies_res {
-                combined.extend(movies);
-            }
-            if let Ok(series) = series_res {
-                combined.extend(series);
-            }
-            if !combined.is_empty() {
-                break;
-            }
-        }
-
+        // Search all configured add-ons in parallel. The old early break
+        // discarded every source after the first add-on returned results.
+        let addon_results =
+            futures::future::join_all(catalog_addons.into_iter().map(|addon| async move {
+                let base_url = Self::base_addon_url(&addon.manifest_url);
+                let (movies_res, series_res) = tokio::join!(
+                    self.fetch_catalog_search(&base_url, "movie", "top", query),
+                    self.fetch_catalog_search(&base_url, "series", "top", query),
+                );
+                let mut items = Vec::new();
+                if let Ok(movies) = movies_res {
+                    items.extend(movies);
+                }
+                if let Ok(series) = series_res {
+                    items.extend(series);
+                }
+                items
+            }))
+            .await;
+        let combined: Vec<_> = addon_results.into_iter().flatten().collect();
         let mut seen = std::collections::HashSet::new();
+        let page_size = 15usize;
+        let start = page.saturating_sub(1).saturating_mul(page_size);
         Ok(combined
             .into_iter()
             .filter(|m| seen.insert(m.id.clone()))
+            .skip(start)
+            .take(page_size)
             .map(|m| adapter::meta_to_catalog_item(&m))
             .collect())
     }

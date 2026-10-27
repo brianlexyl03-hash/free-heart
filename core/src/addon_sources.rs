@@ -33,59 +33,41 @@ pub async fn configure(service: &MovieBoxService) {
         }
     };
 
-    let mut discovered: Vec<InstalledAddon> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-
-    for (index, raw_url) in raw
+    let configured: Vec<(usize, String)> = raw
         .split(|ch| ch == ';' || ch == '\n' || ch == '\r')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .take(MAX_CONFIGURED_MANIFESTS)
-        .enumerate()
-    {
-        if !is_public_https_manifest(raw_url) {
-            eprintln!(
-                "[addon-sources] ignored manifest {}: only public HTTPS hostnames are accepted",
-                index + 1
-            );
-            continue;
-        }
-
-        let manifest_url = AddonClient::normalize_manifest_url(raw_url);
-        if !seen.insert(manifest_url.clone()) {
-            continue;
-        }
-
-        let fetched = tokio::time::timeout(
-            MANIFEST_TIMEOUT,
-            service.addon_client.fetch_manifest(&manifest_url),
-        )
-        .await;
-
+        .map(str::trim).filter(|value| !value.is_empty())
+        .take(MAX_CONFIGURED_MANIFESTS).enumerate()
+        .filter_map(|(index, raw_url)| {
+            if !is_public_https_manifest(raw_url) {
+                eprintln!("[addon-sources] ignored manifest {}: only public HTTPS hostnames are accepted", index + 1);
+                return None;
+            }
+            let url = AddonClient::normalize_manifest_url(raw_url);
+            seen.insert(url.clone()).then_some((index + 1, url))
+        }).collect();
+    // Parallel manifest fetches keep configured add-ons from adding up to
+    // eight sequential 8-second delays during startup.
+    let checks = futures::future::join_all(configured.iter().map(|(index, url)| async move {
+        let result = tokio::time::timeout(MANIFEST_TIMEOUT, service.addon_client.fetch_manifest(url)).await;
+        (*index, url.clone(), result)
+    })).await;
+    let mut discovered: Vec<InstalledAddon> = Vec::new();
+    for (index, manifest_url, fetched) in checks {
         match fetched {
-            Ok(Ok(manifest)) if manifest.provides_stream() => {
+            Ok(Ok(manifest)) if manifest.provides_stream() || manifest.provides_catalog() || manifest.provides_meta() => {
                 discovered.push(InstalledAddon::from_manifest(manifest_url, &manifest));
             }
-            Ok(Ok(_)) => {
-                eprintln!(
-                    "[addon-sources] ignored manifest {}: it does not advertise a stream resource",
-                    index + 1
-                );
-            }
-            Ok(Err(_)) => {
-                // Do not print provider URLs or raw error text; manifest URLs can contain tokens.
-                eprintln!("[addon-sources] manifest {} could not be loaded", index + 1);
-            }
-            Err(_) => {
-                eprintln!("[addon-sources] manifest {} timed out", index + 1);
-            }
+            Ok(Ok(_)) => eprintln!("[addon-sources] ignored manifest {}: it advertises no catalog, metadata, or stream resource", index),
+            Ok(Err(_)) => eprintln!("[addon-sources] manifest {} could not be loaded", index),
+            Err(_) => eprintln!("[addon-sources] manifest {} timed out", index),
         }
     }
 
     if discovered.is_empty() {
         ACTIVE.store(false, Ordering::Relaxed);
         eprintln!(
-            "[addon-sources] no configured streaming add-ons loaded; existing local add-on config was left unchanged"
+            "[addon-sources] no configured catalog/metadata/stream add-ons loaded; existing local add-on config was left unchanged"
         );
         return;
     }
@@ -105,7 +87,7 @@ pub async fn configure(service: &MovieBoxService) {
 
     ACTIVE.store(true, Ordering::Relaxed);
     eprintln!(
-        "[addon-sources] loaded {} configured streaming add-on(s)",
+        "[addon-sources] loaded {} configured catalog/metadata/stream add-on(s)",
         discovered.len()
     );
 }

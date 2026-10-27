@@ -224,12 +224,44 @@ async function home() {
   const results = document.getElementById('results');
   document.getElementById('notify-me').onclick = async (event) => { event.currentTarget.textContent = (await enableNotifications()) ? '✓ Picks enabled' : 'Notifications blocked'; };
   let timer;
-  async function search() {
+  let searchPage = 1;
+  let searchItems = [];
+  let searchRequest = 0;
+  async function search({ more = false } = {}) {
     const query = input.value.trim();
-    if (!query) { results.innerHTML = '<div class="row-heading"><h2>Find your next story</h2><span>Search to explore</span></div><div class="notice">Start typing a title above.</div>'; return; }
-    results.innerHTML = '<div class="loading"><i></i><span>Finding your next watch…</span></div>';
-    try { rememberTaste(query); const data = await api(`/api/search?q=${encodeURIComponent(query)}`); results.innerHTML = renderCards(data.results, `Results for “${query}”`); }
-    catch (error) { results.innerHTML = errBox(error); }
+    const requestId = ++searchRequest;
+    if (!query) {
+      searchPage = 1; searchItems = [];
+      results.innerHTML = '<div class="row-heading"><h2>Find your next story</h2><span>Search to explore</span></div><div class="notice">Start typing a title above.</div>';
+      return;
+    }
+    const page = more ? searchPage + 1 : 1;
+    if (!more) {
+      searchPage = 1; searchItems = [];
+      results.innerHTML = '<div class="loading"><i></i><span>Finding your next watch…</span></div>';
+    } else {
+      const button = document.getElementById('load-more');
+      if (button) { button.disabled = true; button.textContent = 'Loading…'; }
+    }
+    try {
+      rememberTaste(query);
+      const data = await api(`/api/search?q=${encodeURIComponent(query)}&page=${page}`);
+      if (requestId !== searchRequest || input.value.trim() !== query) return;
+      const incoming = Array.isArray(data.results) ? data.results : [];
+      const previousCount = searchItems.length;
+      const seen = new Set(searchItems.map((item) => item.id));
+      for (const item of incoming) if (!seen.has(item.id)) { searchItems.push(item); seen.add(item.id); }
+      searchPage = page;
+      const moreButton = data.hasMore && searchItems.length > previousCount ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '';
+      results.innerHTML = renderCards(searchItems, `Results for “${query}”`) + moreButton;
+      document.getElementById('load-more')?.addEventListener('click', () => search({ more: true }));
+    } catch (error) {
+      if (requestId !== searchRequest) return;
+      if (more) {
+        const button = document.getElementById('load-more');
+        if (button) { button.disabled = false; button.textContent = 'Retry loading more'; }
+      } else results.innerHTML = errBox(error);
+    }
   }
   input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 350); });
   const modeBtn = document.getElementById('mature-mode');
@@ -740,6 +772,54 @@ async function adminPage() {
   };
 }
 
+
+async function shortsPage() {
+  app.innerHTML = `
+    <section class="content-section">
+      <div class="row-heading">
+        <h2>Short Dramas</h2><span>WeFeed Short</span>
+      </div>
+      <form id="shorts-search-form" class="search-shell">
+        <input id="shorts-query" type="search" maxlength="100"
+          placeholder="Search short dramas" autocomplete="off" required>
+        <button type="submit">Search</button>
+      </form>
+      <p id="shorts-status" role="status">Search for a short drama.</p>
+      <div id="shorts-results"></div>
+    </section>`;
+
+  const form = document.getElementById('shorts-search-form');
+  const input = document.getElementById('shorts-query');
+  const status = document.getElementById('shorts-status');
+  const output = document.getElementById('shorts-results');
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const query = input.value.trim();
+    if (!query) return;
+
+    status.textContent = 'Searching WeFeed Short…';
+    output.innerHTML = '';
+
+    try {
+      const data = await api(
+        `/api/search?q=${encodeURIComponent(query)}&page=1`
+      );
+      const rows = Array.isArray(data.results) ? data.results : [];
+      const shorts = rows.filter(item =>
+        /wefeedshort~/i.test(String(item.id || ''))
+      );
+
+      status.textContent = shorts.length
+        ? `${shorts.length} short-drama result(s)`
+        : 'No WeFeed Short results returned. The source may be unavailable.';
+      output.innerHTML = renderCards(shorts, `Short dramas for “${query}”`);
+    } catch (error) {
+      status.textContent = 'Search failed: ' + (error?.message || String(error));
+    }
+  });
+}
+
 function route() {
   app.onclick = null;
   stopPlayer();
@@ -752,6 +832,7 @@ function route() {
   if (segment === 'live') return; // web/live.js owns the Live Match Center route
   if (segment === 'watch') { const [rawId, query] = rawTail.split('?'); return watchPage(decodeURIComponent(rawId), new URLSearchParams(query).get('ep')); }
   if (segment === 'downloads') return downloadsPage();
+  if (segment === 'shorts') return shortsPage();
   if (segment === 'about') { checkUpstreamUpdate(); return aboutPage(); }
   if (segment === 'admin') return adminPage();
   home();

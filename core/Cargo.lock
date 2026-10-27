@@ -671,6 +671,7 @@ name = "free-core"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "futures",
  "moviebox-tui",
  "serde",
  "serde_json",
