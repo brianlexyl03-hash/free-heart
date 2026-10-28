@@ -7,6 +7,7 @@ const fmt = (n) => n > 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${(n / 1e6).toFixed
 const titleUrl = (id) => `/title/${encodeURIComponent(id)}`;
 const TASTE_KEY = 'free.taste.v1';
 const NOTICE_KEY = 'free.notice.v1';
+let activeShortsFeed = null;
 
 function tasteSeeds() {
   return JSON.parse(localStorage.getItem(TASTE_KEY) || '[]').filter(Boolean).slice(0, 4);
@@ -775,52 +776,150 @@ async function adminPage() {
 
 async function shortsPage() {
   app.innerHTML = `
-    <section class="content-section">
-      <div class="row-heading">
-        <h2>Short Dramas</h2><span>WeFeed Short</span>
-      </div>
+    <section class="content-section shorts-shell">
+      <div class="row-heading"><h2>Short Dramas</h2><span>Vertical episodes</span></div>
       <form id="shorts-search-form" class="search-shell">
-        <input id="shorts-query" type="search" maxlength="100"
-          placeholder="Search short dramas" autocomplete="off" required>
+        <input id="shorts-query" type="search" maxlength="100" placeholder="Search short dramas" autocomplete="off" required value="love">
         <button type="submit">Search</button>
       </form>
-      <p id="shorts-status" role="status">Search for a short drama.</p>
-      <div id="shorts-results"></div>
+      <p id="shorts-status" role="status">Loading real short-drama results…</p>
+      <div id="shorts-results" class="shorts-results"></div>
+    </section>
+    <section id="shorts-feed" class="shorts-feed" hidden aria-label="Vertical short-drama player">
+      <button class="shorts-close" id="shorts-close" aria-label="Close player">✕</button>
+      <div class="shorts-feed-stage" id="shorts-feed-stage"></div>
+      <div class="shorts-feed-nav"><button id="shorts-prev">↑ Previous</button><span id="shorts-feed-counter"></span><button id="shorts-next">↓ Next</button></div>
+      <p class="shorts-swipe-hint">Swipe up/down to change episode</p>
     </section>`;
-
   const form = document.getElementById('shorts-search-form');
   const input = document.getElementById('shorts-query');
   const status = document.getElementById('shorts-status');
   const output = document.getElementById('shorts-results');
+  const feed = document.getElementById('shorts-feed');
+  const stage = document.getElementById('shorts-feed-stage');
+  const counter = document.getElementById('shorts-feed-counter');
+  let catalogue = [], activePlayer = null, activeTitle = null, episodes = [], episodeIndex = 0, generation = 0, touchY = null;
 
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const query = input.value.trim();
-    if (!query) return;
+  const closeFeed = () => {
+    generation++;
+    activePlayer?.destroy();
+    activePlayer = null;
+    feed.hidden = true;
+    document.body.classList.remove('shorts-playing');
+  };
+  activeShortsFeed = closeFeed;
+  const labelFor = (ep, i) => ep?.label || ep?.title || ('Episode ' + (i + 1));
 
-    status.textContent = 'Searching WeFeed Short…';
-    output.innerHTML = '';
-
-    try {
-      const data = await api(
-        `/api/search?q=${encodeURIComponent(query)}&page=1`
-      );
-      const rows = Array.isArray(data.results) ? data.results : [];
-      const shorts = rows.filter(item =>
-        /wefeedshort~/i.test(String(item.id || ''))
-      );
-
-      status.textContent = shorts.length
-        ? `${shorts.length} short-drama result(s)`
-        : 'No WeFeed Short results returned. The source may be unavailable.';
-      output.innerHTML = renderCards(shorts, `Short dramas for “${query}”`);
-    } catch (error) {
-      status.textContent = 'Search failed: ' + (error?.message || String(error));
+  function renderShorts(items) {
+    if (!items.length) {
+      output.innerHTML = '<div class="notice">The live WeFeed source returned no short dramas for this search. No fake titles or sample videos are shown.</div>';
+      return;
     }
-  });
-}
+    output.innerHTML = '<div class="shorts-grid">' + items.map((item, index) =>
+      '<button class="short-drama-card" type="button" data-short-index="' + index + '">' +
+      '<span class="short-drama-poster">' + (item.poster ? '<img loading="lazy" referrerpolicy="no-referrer" src="' + esc(item.poster) + '" alt="">' : '<span class="poster-placeholder"></span>') +
+      '<i>▶</i></span><strong>' + esc(item.title) + '</strong><small>' + esc(item.year || 'Short drama') + ' · Tap to play</small></button>'
+    ).join('') + '</div>';
+  }
 
+  async function searchShorts(query) {
+    status.textContent = 'Searching the live catalogue…';
+    output.innerHTML = '';
+    try {
+      const data = await api('/api/search?q=' + encodeURIComponent(query) + '&page=1');
+      catalogue = (Array.isArray(data.results) ? data.results : []).filter(item => /wefeedshort~/i.test(String(item.id || '')));
+      status.textContent = catalogue.length ? catalogue.length + ' real short drama result(s)' : 'The live source returned no short dramas for this search.';
+      renderShorts(catalogue);
+    } catch (error) {
+      status.textContent = 'Catalogue unavailable: ' + (error?.message || String(error));
+      output.innerHTML = '<div class="notice error">Could not load real dramas. ' + esc(error?.message || String(error)) + '</div>';
+    }
+  }
+
+  async function playShort(index, preferredEpisode = 0) {
+    const item = catalogue[index];
+    if (!item) return;
+    const run = ++generation;
+    activePlayer?.destroy();
+    activePlayer = null;
+    activeTitle = { ...item, catalogueIndex: index };
+    episodes = [];
+    episodeIndex = 0;
+    feed.hidden = false;
+    document.body.classList.add('shorts-playing');
+    stage.innerHTML = '<div class="shorts-loading"><i></i><span>Loading real episode…</span></div>';
+    counter.textContent = item.title;
+    try {
+      const detail = await api('/api/title/' + encodeURIComponent(item.id));
+      if (run !== generation) return;
+      activeTitle = { ...detail, id: item.id, catalogueIndex: index };
+      episodes = Array.isArray(detail.episodes) ? detail.episodes.slice() : [];
+      episodeIndex = Math.max(0, Math.min(preferredEpisode, Math.max(0, episodes.length - 1)));
+      await loadEpisode(run);
+    } catch (error) {
+      if (run !== generation) return;
+      stage.innerHTML = '<div class="shorts-player-error"><strong>Episode could not load</strong><p>' + esc(error?.message || String(error)) + '</p><button id="shorts-retry">Try again</button></div>';
+      document.getElementById('shorts-retry')?.addEventListener('click', () => playShort(index, episodeIndex));
+    }
+  }
+
+  async function loadEpisode(run = generation) {
+    if (run !== generation || !activeTitle) return;
+    activePlayer?.destroy();
+    activePlayer = null;
+    const episode = episodes[episodeIndex] || null;
+    const episodeKey = episode?.key || undefined;
+    const title = activeTitle.title || 'Short drama';
+    const label = episode ? labelFor(episode, episodeIndex) : 'Episode 1';
+    stage.innerHTML = '<div class="shorts-feed-title"><b>' + esc(title) + '</b><span>' + esc(label) + '</span></div><div class="shorts-player-host" id="shorts-player-host"></div><div class="shorts-player-loading" id="shorts-player-loading">Resolving episode…</div>';
+    counter.textContent = (activeTitle.catalogueIndex + 1) + '/' + catalogue.length + ' · ' + (episodes.length ? (episodeIndex + 1) + '/' + episodes.length : 'Episode');
+    document.getElementById('shorts-prev').disabled = activeTitle.catalogueIndex === 0 && episodeIndex === 0;
+    document.getElementById('shorts-next').disabled = activeTitle.catalogueIndex === catalogue.length - 1 && episodeIndex >= Math.max(0, episodes.length - 1);
+    try {
+      const resolved = await resolveStream(activeTitle.id, episodeKey);
+      if (run !== generation) return;
+      document.getElementById('shorts-player-loading')?.remove();
+      const tracks = (resolved.subtitles || []).map(s => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) }));
+      activePlayer = mountPlayer(document.getElementById('shorts-player-host'), {
+        src: resolved.stream, title: title + ' · ' + label, kind: resolved.kind, tracks,
+        qualities: resolved.resolutions || [], selectedQuality: resolved.selectedResolution
+      });
+      activePlayer.video.addEventListener('ended', nextEpisode, { once: true });
+    } catch (error) {
+      if (run !== generation) return;
+      document.getElementById('shorts-player-loading')?.remove();
+      const host = document.getElementById('shorts-player-host');
+      if (host) host.innerHTML = '<div class="shorts-player-error"><strong>No playable stream was returned for this episode</strong><p>' + esc(error?.message || String(error)) + '</p><button id="shorts-retry">Retry episode</button></div>';
+      document.getElementById('shorts-retry')?.addEventListener('click', () => { const nextRun = ++generation; loadEpisode(nextRun); });
+    }
+  }
+
+  async function nextEpisode() {
+    if (!activeTitle) return;
+    if (episodeIndex + 1 < episodes.length) { episodeIndex++; await loadEpisode(++generation); return; }
+    if (activeTitle.catalogueIndex + 1 < catalogue.length) { await playShort(activeTitle.catalogueIndex + 1); return; }
+    counter.textContent = 'End of available catalogue';
+  }
+  async function previousEpisode() {
+    if (!activeTitle) return;
+    if (episodeIndex > 0) { episodeIndex--; await loadEpisode(++generation); }
+    else if (activeTitle.catalogueIndex > 0) await playShort(activeTitle.catalogueIndex - 1);
+  }
+
+  form.addEventListener('submit', async event => { event.preventDefault(); const query = input.value.trim(); if (query) await searchShorts(query); });
+  output.addEventListener('click', event => { const card = event.target.closest('[data-short-index]'); if (card) playShort(Number(card.dataset.shortIndex)); });
+  document.getElementById('shorts-close').addEventListener('click', closeFeed);
+  document.getElementById('shorts-next').addEventListener('click', nextEpisode);
+  document.getElementById('shorts-prev').addEventListener('click', previousEpisode);
+  feed.addEventListener('touchstart', event => { touchY = event.changedTouches[0]?.clientY ?? null; }, { passive: true });
+  feed.addEventListener('touchend', event => { if (touchY === null) return; const delta = touchY - (event.changedTouches[0]?.clientY ?? touchY); touchY = null; if (Math.abs(delta) > 45) (delta > 0 ? nextEpisode() : previousEpisode)(); }, { passive: true });
+  feed.addEventListener('wheel', event => { if (Math.abs(event.deltaY) > 25) (event.deltaY > 0 ? nextEpisode() : previousEpisode)(); }, { passive: true });
+  feed.addEventListener('keydown', event => { if (event.key === 'ArrowDown') { event.preventDefault(); nextEpisode(); } if (event.key === 'ArrowUp') { event.preventDefault(); previousEpisode(); } if (event.key === 'Escape') closeFeed(); });
+  await searchShorts(input.value.trim() || 'love');
+}
 function route() {
+  activeShortsFeed?.();
+  activeShortsFeed = null;
   app.onclick = null;
   stopPlayer();
   document.querySelector('.sheet-backdrop')?.remove();
