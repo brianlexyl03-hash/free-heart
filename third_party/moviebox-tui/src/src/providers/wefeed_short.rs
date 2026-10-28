@@ -19,6 +19,9 @@ pub struct WeFeedShortClient {
     user_agent: String,
     client_info: String,
     spoofed_ip: String,
+    /// Optional valid JWT issued by WeFeed for an authorized session.
+    /// Configure as a server-side secret; never commit the token.
+    auth_client: crate::providers::moviebox::client::MovieBoxClient,
 }
 
 #[derive(Debug)]
@@ -73,6 +76,7 @@ impl WeFeedShortClient {
             user_agent,
             client_info,
             spoofed_ip,
+            auth_client: crate::providers::moviebox::client::MovieBoxClient::new(),
         }
     }
 
@@ -170,6 +174,16 @@ impl WeFeedShortClient {
             .request(method, &url)
             .headers(headers);
 
+        // Automatically obtain the anonymous visitor JWT through the app's
+        // existing signed visitor-login flow; no manual WEFEED_JWT is required.
+        let token = self.auth_client.ensure_session().await.map_err(|error| {
+            WeFeedShortError::Network(format!("Could not acquire automatic guest session: {error}"))
+        })?;
+        request = request.header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {token}"),
+        );
+
         if let Some(body_text) = body_text {
             request = request
                 .header(
@@ -189,9 +203,12 @@ impl WeFeedShortClient {
         let status = response.status();
 
         if !status.is_success() {
-            return Err(WeFeedShortError::HttpStatus(
-                status.as_u16(),
-            ));
+            if status.as_u16() == 401 {
+                return Err(WeFeedShortError::InvalidResponse(
+                    "WeFeed guest session could not be acquired automatically".to_string(),
+                ));
+            }
+            return Err(WeFeedShortError::HttpStatus(status.as_u16()));
         }
 
         let bytes = response
