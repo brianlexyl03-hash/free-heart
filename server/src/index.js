@@ -187,6 +187,11 @@ app.get('/api/search', async (req) => {
   return core.search(q, page);
 });
 
+app.get('/api/shorts', async (req) => {
+  const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
+  return core.shorts(q, page);
+});
+
 // Recommendations use only short-lived, client-supplied taste seeds. No
 // watch history, identity, or notification profile is stored on the server.
 app.post('/api/recommendations', async (req) => {

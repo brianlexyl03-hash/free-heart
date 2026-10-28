@@ -826,7 +826,7 @@ async function shortsPage() {
     status.textContent = 'Searching the live catalogue…';
     output.innerHTML = '';
     try {
-      const data = await api('/api/search?q=' + encodeURIComponent(query) + '&page=1');
+      const data = await api('/api/shorts?q=' + encodeURIComponent(query) + '&page=1');
       catalogue = (Array.isArray(data.results) ? data.results : []).filter(item => /wefeedshort~/i.test(String(item.id || '')));
       status.textContent = catalogue.length ? catalogue.length + ' real short drama result(s)' : 'The live source returned no short dramas for this search.';
       renderShorts(catalogue);

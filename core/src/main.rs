@@ -439,6 +439,34 @@ async fn search(
     }))
 }
 
+async fn shorts(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<SearchResponse>, ApiError> {
+    let q = query.q.trim();
+    if q.is_empty() || q.len() > 100 {
+        return Err(ApiError::bad_request("q must contain 1–100 characters"));
+    }
+    let page = query.page.unwrap_or(1).clamp(1, 50);
+    let items = tokio::time::timeout(
+        std::time::Duration::from_secs(7),
+        state.service.search_wefeed(q, page),
+    )
+    .await
+    .map_err(|_| ApiError {
+        status: StatusCode::GATEWAY_TIMEOUT,
+        kind: "wefeed_timeout",
+        message: "WeFeed Short catalogue timed out".to_string(),
+    })?
+    .map_err(ApiError::provider)?;
+    let has_more = items.len() >= 15;
+    Ok(Json(SearchResponse {
+        results: items.into_iter().map(item_response).collect(),
+        page,
+        has_more,
+    }))
+}
+
 async fn title(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -645,6 +673,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/search", get(search))
+        .route("/shorts", get(shorts))
         .route("/title/{id}", get(title))
         .route("/resolve", post(resolve))
         .with_state(state);

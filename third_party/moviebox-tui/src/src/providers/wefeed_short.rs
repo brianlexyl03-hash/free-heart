@@ -9,8 +9,8 @@ use url::Url;
 
 /// WeFeed-Short API client.
 ///
-/// Prefers documented mobile-BFF short-content routes and retains legacy route fallbacks.
-/// Live upstream authentication and playback compatibility still require deployment testing.
+/// API contract was inferred from the APK's endpoint declarations.
+/// Live authentication and response compatibility remain unverified.
 #[derive(Clone)]
 pub struct WeFeedShortClient {
     client: Client,
@@ -251,38 +251,17 @@ impl WeFeedShortClient {
             ("host", self.host_parameter.clone()),
         ];
 
-        let page = page.max(1);
-        let per_page = per_page.clamp(1, 20);
-        let mobile_result = self.request_json(
+        self.request_json(
             Method::POST,
-            "/wefeed-mobile-bff/subject-api/search",
+            "/wefeed-short-bff/shorts/search",
             &query,
             Some(json!({
                 "keyword": keyword,
-                "type": 7,
-                "page": page,
-                "pageSize": per_page
+                "perPage": per_page.clamp(1, 50),
+                "page": page.max(1).to_string()
             })),
-        ).await;
-        match mobile_result {
-            Ok(value) => Ok(value),
-            Err(primary_error) => {
-                self.request_json(
-                    Method::POST,
-                    "/wefeed-short-bff/shorts/search",
-                    &query,
-                    Some(json!({
-                        "keyword": keyword,
-                        "perPage": per_page,
-                        "page": page.to_string()
-                    })),
-                ).await.map_err(|fallback_error| {
-                    WeFeedShortError::InvalidResponse(format!(
-                        "Documented short-content search failed ({primary_error}); legacy WeFeed search failed ({fallback_error})"
-                    ))
-                })
-            }
-        }
+        )
+        .await
     }
 
     /// GET /wefeed-short-bff/shorts/get-info
@@ -290,24 +269,16 @@ impl WeFeedShortClient {
         &self,
         subject_id: &str,
     ) -> Result<Value, WeFeedShortError> {
-        let query = vec![
-            ("subjectId", subject_id.to_string()),
-            ("host", self.host_parameter.clone()),
-        ];
-        match self.request_json(
+        self.request_json(
             Method::GET,
-            "/wefeed-mobile-bff/shorts/get-info",
-            &query,
+            "/wefeed-short-bff/shorts/get-info",
+            &[
+                ("subjectId", subject_id.to_string()),
+                ("host", self.host_parameter.clone()),
+            ],
             None,
-        ).await {
-            Ok(value) => Ok(value),
-            Err(_) => self.request_json(
-                Method::GET,
-                "/wefeed-short-bff/shorts/get-info",
-                &query,
-                None,
-            ).await,
-        }
+        )
+        .await
     }
 
     /// GET /wefeed-short-bff/shorts/mini-list
@@ -318,27 +289,19 @@ impl WeFeedShortClient {
         end_position: usize,
         pager_mode: &str,
     ) -> Result<Value, WeFeedShortError> {
-        let query = vec![
-            ("subjectId", subject_id.to_string()),
-            ("startPosition", start_position.to_string()),
-            ("endPosition", end_position.to_string()),
-            ("pagerMode", pager_mode.to_string()),
-            ("host", self.host_parameter.clone()),
-        ];
-        match self.request_json(
+        self.request_json(
             Method::GET,
-            "/wefeed-mobile-bff/shorts/mini-list",
-            &query,
+            "/wefeed-short-bff/shorts/mini-list",
+            &[
+                ("subjectId", subject_id.to_string()),
+                ("startPosition", start_position.to_string()),
+                ("endPosition", end_position.to_string()),
+                ("pagerMode", pager_mode.to_string()),
+                ("host", self.host_parameter.clone()),
+            ],
             None,
-        ).await {
-            Ok(value) => Ok(value),
-            Err(_) => self.request_json(
-                Method::GET,
-                "/wefeed-short-bff/shorts/mini-list",
-                &query,
-                None,
-            ).await,
-        }
+        )
+        .await
     }
 
     /// GET /wefeed-short-bff/subject-api/resource
@@ -366,7 +329,7 @@ impl WeFeedShortClient {
 
         self.request_json(
             Method::GET,
-            "/wefeed-mobile-bff/subject-api/resource/v2",
+            "/wefeed-short-bff/subject-api/resource",
             &query,
             None,
         )

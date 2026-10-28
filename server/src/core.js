@@ -110,6 +110,7 @@ export const core = {
   enabled: () => Boolean(BASE),
   async health() { return parse(Health, await call('/health')); },
   async search(q, page) { return cached(`search|${String(q).toLowerCase()}|${page}`, 300000, 43200000, async () => parse(Search, await call(`/search?q=${encodeURIComponent(q)}&page=${page}`))); },
+  async shorts(q, page) { return cached(`shorts|${String(q).toLowerCase()}|${page}`, 60000, 0, async () => parse(Search, await call(`/shorts?q=${encodeURIComponent(q)}&page=${page}`))); },
   async title(id) { return cached(`title|${id}`, 600000, 43200000, async () => parse(Title, await call(`/title/${encodeURIComponent(id)}`))); },
   async resolve(id, episode, resolution) {
     return cached(`resolve|${id}|${episode ?? ''}|${resolution ?? ''}`, 90000, 0, async () => parse(Resolved, await call('/resolve', {
