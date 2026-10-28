@@ -133,12 +133,13 @@ impl WeFeedShortClient {
         method: &str,
         url: &str,
         body: Option<&str>,
+    auth_token: Option<&str>,
     ) -> HeaderMap {
         crate::providers::moviebox::crypto::build_signed_headers(
             method,
             url,
             body,
-            None,
+            auth_token,
             &self.user_agent,
             &self.client_info,
             &self.spoofed_ip,
@@ -163,10 +164,16 @@ impl WeFeedShortClient {
             })?;
 
         let method_text = method.as_str();
+        // Sign with the same guest token that is sent in Authorization.
+        let token = self.auth_client.ensure_session().await.map_err(|error| {
+            WeFeedShortError::Network(format!("Could not acquire automatic guest session: {error}"))
+        })?;
+
         let headers = self.signed_headers(
             method_text,
             &url,
             body_text.as_deref(),
+            Some(token.as_str()),
         );
 
         let mut request = self
@@ -174,11 +181,6 @@ impl WeFeedShortClient {
             .request(method, &url)
             .headers(headers);
 
-        // Automatically obtain the anonymous visitor JWT through the app's
-        // existing signed visitor-login flow; no manual WEFEED_JWT is required.
-        let token = self.auth_client.ensure_session().await.map_err(|error| {
-            WeFeedShortError::Network(format!("Could not acquire automatic guest session: {error}"))
-        })?;
         request = request.header(
             reqwest::header::AUTHORIZATION,
             format!("Bearer {token}"),
@@ -275,7 +277,7 @@ impl WeFeedShortClient {
             Some(json!({
                 "keyword": keyword,
                 "perPage": per_page.clamp(1, 50),
-                "page": page.max(1).to_string()
+                "page": page.max(1)
             })),
         )
         .await
