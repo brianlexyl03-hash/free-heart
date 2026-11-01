@@ -477,10 +477,11 @@ pub async fn details(
         .ok_or(ProviderError::NotFound)?;
     let title = text(&row, &["title", "subjectTitle", "name", "subjectName"])
         .ok_or(ProviderError::NotFound)?;
-    let mini_list = client.mini_list(id, 0, 500, "0").await.ok();
-    let seasons = mini_list
-        .as_ref()
-        .map(|value| episodes_to_seasons(&collect_matching(value, is_episode_row, 0)))
+    let seasons = client
+        .resource_page(id, 1, 20, None)
+        .await
+        .ok()
+        .map(|value| episodes_to_seasons(&collect_matching(&value, is_episode_row, 0)))
         .unwrap_or_default();
     let source_id = source_identifier(&row).unwrap_or_else(|| id.to_string());
 

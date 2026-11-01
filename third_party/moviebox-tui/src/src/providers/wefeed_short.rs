@@ -322,10 +322,10 @@ impl WeFeedShortClient {
         resolution: Option<&str>,
     ) -> Result<Value, WeFeedShortError> {
         let mut query = format!(
-            "subjectId={}&page={}&perPage={}",
+            "subjectId={}&page={}&perPage={}&se=1",
             encode_query_component(subject_id),
             page.max(1),
-            per_page.clamp(1, 50)
+            per_page.clamp(1, 20)
         );
         if let Some(resolution) = resolution {
             query.push_str("&resolution=");
