@@ -367,10 +367,10 @@ function openDownloadSheet({ id, data, seasons, season, current, out }) {
     let ok = false; let msg = '';
     try {
       const r = await api('/api/resolve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, episode: isSeries ? cur.key : undefined, resolution: quality }) });
-      if (r.kind !== 'file') throw new Error('This source is a live stream. You can play it but not save it.');
+      if (!r.download && !(r.candidates || []).some((candidate) => candidate.download)) throw new Error('This source has no downloadable file route.');
       let resp; let lastSourceError;
-      for (const candidate of (r.candidates || [{ stream: r.stream }])) {
-        const probe = await fetch(candidate.stream, { headers: { range: 'bytes=0-0' } });
+      for (const candidate of (r.candidates || [{ stream: r.stream, download: r.download }])) {
+        const probe = await fetch(candidate.download || r.download || candidate.stream, { headers: { range: 'bytes=0-0' } });
         if (probe.ok) { resp = probe; break; }
         lastSourceError = probe;
         try { await probe.body?.cancel(); } catch { /* ignore */ }

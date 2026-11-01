@@ -295,10 +295,15 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
     kind: candidate.kind,
     stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r.selectedResolution),
   }));
+  const withDownloads = candidates.map((candidate) => ({
+    ...candidate,
+    download: candidate.kind === 'hls' ? candidate.stream.replace('/api/stream/', '/api/remux/') : candidate.stream,
+  }));
   return {
     kind: r.kind,
-    stream: candidates[0]?.stream || mint(r.url, r.headers),
-    candidates,
+    stream: withDownloads[0]?.stream || mint(r.url, r.headers),
+    download: withDownloads[0]?.download || withDownloads[0]?.stream,
+    candidates: withDownloads,
     subtitles: (r.subtitles || []).map((s) => ({ lang: s.lang, label: s.label, src: mint(s.url, r.headers) })),
     resolutions: r.resolutions || [],
     selectedResolution: r.selectedResolution,

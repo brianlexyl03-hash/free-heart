@@ -86,7 +86,6 @@ async function runDownload(task) {
     let candidates = resolved.candidates || [{ stream: resolved.stream }];
     let candidateIndex = 0;
     let reResolved = false;
-    if (resolved.kind !== 'file') throw new Error('This source is a live/HLS stream and cannot be saved as one file. Use Play instead.');
     const root = await navigator.storage.getDirectory();
     const file = t.file || `${t.taskId}.bin`;
     const handle = await root.getFileHandle(file, { create: true });
@@ -99,8 +98,9 @@ async function runDownload(task) {
     for (;;) {
       attempts += 1;
       let response = null;
-      const candidate = candidates[candidateIndex] || { stream: resolved.stream };
-      try { response = await fetch(candidate.stream, { headers: existing > 0 ? { range: `bytes=${existing}-` } : {}, signal: ac.signal, credentials: 'same-origin' }); }
+      const candidate = candidates[candidateIndex] || { stream: resolved.stream, download: resolved.download };
+      const downloadUrl = candidate.download || resolved.download || candidate.stream;
+      try { response = await fetch(downloadUrl, { headers: existing > 0 ? { range: `bytes=${existing}-` } : {}, signal: ac.signal, credentials: 'same-origin' }); }
       catch (e) { if (ac.signal.aborted) throw e; }
       if (!response || response.status >= 500 || response.status === 429) {
         if (response && candidateIndex + 1 < candidates.length) {

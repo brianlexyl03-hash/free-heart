@@ -72,7 +72,7 @@ Keep secrets in your deployment environment. Do not commit real API keys, passwo
 
 - Use media sources and clips that you are authorized to access and republish.
 - The project does not claim to bypass paywalls, geo restrictions, authentication, or provider access controls.
-- HLS playback does not produce a single offline file through the browser downloader.
+- HLS playback uses the authenticated relay; downloads use the server-side FFmpeg remux path when FFmpeg is available in the deployment image.
 - Browser background work and push delivery depend on device, browser, and deployment configuration.
 - Push notifications require valid VAPID configuration.
 - Caption generation requires a configured provider or local model.
