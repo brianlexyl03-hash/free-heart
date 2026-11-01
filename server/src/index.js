@@ -339,6 +339,23 @@ function upstreamMessage(status) {
   if (status === 410) return 'This link expired (HTTP 410). Go back and press Play again.';
   return `The source rejected this request (HTTP ${status}). Try another quality or try again later.`;
 }
+function isHlsResponse(response, sourceUrl) {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('mpegurl') || contentType.includes('vnd.apple.mpegurl')) return true;
+  try { return new URL(sourceUrl).pathname.toLowerCase().endsWith('.m3u8'); } catch { return false; }
+}
+function proxyHlsUri(value, baseUrl, headers) {
+  if (!value || /^(data:|https?:\/\/[^\s]+\/api\/stream\/)/i.test(value)) return value;
+  try { return mint(new URL(value, baseUrl).toString(), headers); } catch { return value; }
+}
+function rewriteHlsManifest(text, baseUrl, headers) {
+  return String(text).split(/(\r?\n)/).map((line) => {
+    if (/^#/.test(line) || !line.trim()) {
+      return line.replace(/URI="([^"]+)"/gi, (_match, uri) => `URI="${proxyHlsUri(uri, baseUrl, headers)}"`);
+    }
+    return proxyHlsUri(line.trim(), baseUrl, headers);
+  }).join('');
+}
 
 app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1 minute' } } }, async (req, reply) => {
   const { token } = z.object({ token: z.string().regex(/^[\w-]{20,40}$/) }).parse(req.params);
@@ -402,6 +419,16 @@ app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1
   if (!r.ok && r.status !== 416) {
     try { await r.body?.cancel(); } catch {}
     return reply.code(r.status).send({ error: 'upstream_rejected', message: upstreamMessage(r.status) });
+  }
+
+  if (r.ok && isHlsResponse(r, e.url)) {
+    const manifest = await r.text().catch(() => '');
+    if (!manifest || manifest.length > 2_000_000) {
+      return reply.code(502).send({ error: 'invalid_manifest', message: 'The source returned an empty or oversized HLS manifest.' });
+    }
+    reply.code(200).type('application/vnd.apple.mpegurl; charset=utf-8');
+    reply.header('cache-control', 'no-store');
+    return reply.send(rewriteHlsManifest(manifest, e.url, e.headers));
   }
 
   reply.code(r.status);
