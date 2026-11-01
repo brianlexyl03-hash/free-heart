@@ -275,6 +275,62 @@ async fn provider_releases(
     }
 }
 
+fn title_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
+fn likely_same_title(left: &CatalogItem, requested_title: &str, requested_year: Option<&str>) -> bool {
+    let a = title_key(&left.title);
+    let b = title_key(requested_title);
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let title_matches = a == b || a.contains(&b) || b.contains(&a);
+    let year_matches = match (requested_year, left.year.as_deref()) {
+        (Some(wanted), Some(actual)) => wanted == actual,
+        _ => true,
+    };
+    title_matches && year_matches
+}
+
+async fn fallback_movie_releases(
+    service: &MovieBoxService,
+    details: &MediaDetails,
+    season: usize,
+    episode: usize,
+) -> Result<(ProviderKind, String, Vec<Release>), ProviderError> {
+    for provider in [ProviderKind::FourKHdHub, ProviderKind::Dramachi] {
+        let Ok(items) = service.search_typed(provider, &details.title, 1).await else {
+            continue;
+        };
+        for item in items.iter().filter(|item| {
+            likely_same_title(item, &details.title, details.year.as_deref())
+        }) {
+            if let Ok(releases) = provider_releases(
+                service,
+                provider,
+                &item.id.value,
+                season,
+                episode,
+                details.is_series(),
+            )
+            .await
+            {
+                if releases.iter().any(|release| release.direct_url().is_some()) {
+                    return Ok((provider, item.id.value.clone(), releases));
+                }
+            }
+        }
+    }
+    Err(ProviderError::Unavailable(
+        "MovieBox has no playable stream and no matching fallback source responded".to_string(),
+    ))
+}
+
 fn episode_parts(value: Option<&str>) -> Result<(usize, usize), ApiError> {
     let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
         return Ok((0, 0));
@@ -575,7 +631,7 @@ async fn resolve(
             },
             other => ApiError::provider(other),
         })?;
-    let releases = provider_releases(
+    let primary = provider_releases(
         &state.service,
         provider,
         &subject_id,
@@ -583,8 +639,34 @@ async fn resolve(
         episode,
         details.is_series(),
     )
-    .await
-    .map_err(ApiError::provider)?;
+    .await;
+    let (active_provider, active_subject_id, releases) = match primary {
+        Ok(releases) if releases.iter().any(|release| release.direct_url().is_some()) => {
+            (provider, subject_id.clone(), releases)
+        }
+        Err(primary_error) if provider == ProviderKind::MovieBox => fallback_movie_releases(
+            &state.service,
+            &details,
+            season,
+            episode,
+        )
+        .await
+        .map_err(|_| ApiError::provider(primary_error))?,
+        Ok(_) if provider == ProviderKind::MovieBox => fallback_movie_releases(
+            &state.service,
+            &details,
+            season,
+            episode,
+        )
+        .await
+        .map_err(|_| ApiError {
+            status: StatusCode::BAD_GATEWAY,
+            kind: "provider_error",
+            message: "MovieBox has no playable stream and no matching fallback source responded".to_string(),
+        })?,
+        Err(error) => return Err(ApiError::provider(error)),
+        Ok(releases) => (provider, subject_id.clone(), releases),
+    };
     let mut resolutions: Vec<u32> = releases
         .iter()
         .map(|release| release.resolution_u64().min(u32::MAX as u64) as u32)
@@ -609,24 +691,24 @@ async fn resolve(
         .ok_or_else(|| ApiError {
             status: StatusCode::NOT_FOUND,
             kind: "stream_unavailable",
-            message: format!("No playable stream is available from {provider}; try another search result or quality"),
+            message: format!("No playable stream is available from {active_provider}; try another search result or quality"),
         })?;
     let candidates = resolve_candidates(release);
     let first = candidates.first().ok_or_else(|| ApiError {
         status: StatusCode::NOT_FOUND,
         kind: "stream_unavailable",
         message: format!(
-            "No playable stream is available from {provider}; try another search result or quality"
+            "No playable stream is available from {active_provider}; try another search result or quality"
         ),
     })?;
     let url = first.url.clone();
     let kind = first.kind;
-    let subtitles = if provider == ProviderKind::MovieBox && !subject_id.starts_with("wefeedshort~") {
+    let subtitles = if active_provider == ProviderKind::MovieBox && !active_subject_id.starts_with("wefeedshort~") {
         if let Some(resource_id) = release.resource_id.as_deref() {
             state
                 .service
                 .get_ext_captions(
-                    &subject_id,
+                    &active_subject_id,
                     resource_id,
                     &details.sibling_ids(),
                     season,
