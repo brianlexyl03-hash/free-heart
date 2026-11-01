@@ -135,6 +135,13 @@ setInterval(() => { const n = Date.now(); for (const [k, v] of tokens) if (v.exp
 // Provider signing headers stay in the server-side token record; none are returned to the browser.
 const ALLOWED_HDRS = new Set(['referer', 'user-agent', 'cookie', 'origin']);
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+let liveChannelSources = [];
+try {
+  const parsed = JSON.parse(process.env.LIVE_CHANNEL_SOURCES_JSON || '[]');
+  liveChannelSources = Array.isArray(parsed) ? parsed : [];
+} catch {
+  liveChannelSources = [];
+}
 const UPSTREAM_REPO = 'mesamirh/MovieBox-TUI';
 const UPSTREAM_COMMIT = process.env.UPSTREAM_COMMIT || '';
 const SOCIAL_WHATSAPP_URL = process.env.SOCIAL_WHATSAPP_URL || '';
@@ -168,6 +175,19 @@ function mintSmart(url, headers, kind, res) {
   try { boxed = /\.(mkv|avi|mov|ts|flv|wmv|mpd)$/i.test(new URL(url).pathname); } catch {}
   return kind !== 'hls' && (boxed || Number(res) >= 1080) ? m.replace('/api/stream/', '/api/remux/') : m;
 }
+app.get('/api/live/channels/:id/playback', async (req, reply) => {
+  const id = z.string().regex(/^[a-z0-9-]{1,50}$/i).parse(req.params.id);
+  const channel = liveChannelSources.find((item) => String(item?.id) === id);
+  const sources = (channel?.sources || []).filter((source) => {
+    try { return ['http:', 'https:'].includes(new URL(String(source?.url || '')).protocol); } catch { return false; }
+  }).map((source) => ({
+    label: String(source.label || 'Authorized source').slice(0, 80),
+    url: mint(String(source.url), source.headers || {}),
+  }));
+  if (!sources.length) return reply.code(404).send({ error: 'channel_unavailable', message: 'No authorized playback source is configured for this channel.' });
+  reply.header('cache-control', 'no-store');
+  return { id, sources };
+});
 registerRemux(app, { tokens, TTL });
 function remuxExt(u) { try { return /\.(mpd|mkv|avi|mov|ts|flv|wmv)$/i.test(new URL(u).pathname); } catch { return false; } }
 function mintFor(url, headers = {}) { const m = mint(url, headers); return remuxExt(url) ? m.replace('/api/stream/', '/api/play/') : m; }

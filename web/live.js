@@ -2,7 +2,6 @@
 // Self-contained: owns the #/live route and never touches the movie/player/download code.
 const app = document.getElementById('app');
 const CFG = Object.assign({ liveRefreshMs: 20000, idleRefreshMs: 60000, reminderMinutes: 15, leagues: [] }, window.__FREE_LIVE_CONFIG || {});
-const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
 const K = { matches: 'free.live.follow.matches.v2', teams: 'free.live.follow.teams.v2', prefs: 'free.live.prefs.v2', snap: 'free.live.snap.v2', remind: 'free.live.remind.v2' };
 
 // ---------- tiny helpers ----------
@@ -42,7 +41,7 @@ async function getJson(url, tries = 2) {
   let last;
   for (let i = 0; i < tries; i += 1) {
     try {
-      const r = await fetch(url, { headers: { accept: 'application/json' }, cache: 'no-store' }); // the server already shields ESPN; never reuse a stale browser copy
+      const r = await fetch(url, { headers: { accept: 'application/json' }, cache: 'no-store' }); // the server adapter owns the upstream provider; never reuse a stale browser copy
       if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
       return await r.json();
     } catch (e) { last = e; if (e.status && e.status < 500 && e.status !== 429) break; if (i + 1 < tries) await wait(500 * (i + 1)); }
@@ -56,17 +55,9 @@ async function fetchRange(dates) {
     try {
       const data = await getJson(`/api/live/scoreboards?leagues=${encodeURIComponent(ids.join(','))}&dates=${dates}`);
       return { results: data.results || {}, stale: !!data.stale };
-    } catch (e) { if (e.status === 404) S.proxyMissing = true; /* any other proxy failure: try ESPN directly below */ }
+    } catch (e) { if (e.status === 404) S.proxyMissing = true; /* the server adapter is unavailable */ }
   }
-  const results = {};
-  let i = 0;
-  await Promise.all(Array.from({ length: 6 }, async () => {
-    while (i < ids.length) {
-      const id = ids[i]; i += 1;
-      try { results[id] = await getJson(`${ESPN}/${encodeURIComponent(id)}/scoreboard?dates=${dates}&limit=300`, 1); } catch { /* skip league */ }
-    }
-  }));
-  return { results, stale: false };
+  return { results: {}, stale: false };
 }
 
 function names(c) {
@@ -216,11 +207,11 @@ function statusCell(m) {
   if (m.status === 'postponed') return '<span class="lv-ft warn">PPD</span>';
   return `<span class="lv-time">${esc(fmtTime(m.kickoff))}</span>`;
 }
-const crest = (t) => (t.logo ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(t.logo)}" alt="">` : '<span class="lv-crest-fb">⚽</span>');
+const crest = (t) => (t.logo ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(t.logo)}" alt="">` : `<span class="lv-crest-fb">${esc(String(t.short || t.name || 'FB').slice(0, 3).toUpperCase())}</span>`);
 function row(m) {
   const f = isFollowing(m);
   const sc = (t) => (m.status === 'scheduled' || m.status === 'postponed' ? '' : t.score ?? 0);
-  return `<article class="lv-row ${m.status}" data-open="${esc(m.id)}" tabindex="0" role="button" aria-label="${esc(`${m.home.name} versus ${m.away.name}, open details`)}"><div class="lv-st">${statusCell(m)}</div><div class="lv-teams"><div class="lv-team">${crest(m.home)}<span>${esc(m.home.name)}</span><b>${sc(m.home)}</b></div><div class="lv-team">${crest(m.away)}<span>${esc(m.away.name)}</span><b>${sc(m.away)}</b></div></div><button class="lv-star ${f ? 'on' : ''}" data-follow="${esc(m.id)}" aria-pressed="${f}" aria-label="${f ? 'Unfollow' : 'Follow'} ${esc(m.home.name)} vs ${esc(m.away.name)}">${f ? '★' : '☆'}</button></article>`;
+  return `<article class="lv-row ${m.status}" data-open="${esc(m.id)}" tabindex="0" role="button" aria-label="${esc(`${m.home.name} versus ${m.away.name}, open details`)}"><div class="lv-st">${statusCell(m)}</div><div class="lv-teams"><div class="lv-team">${crest(m.home)}<span>${esc(m.home.name)}</span><b>${sc(m.home)}</b></div><div class="lv-team">${crest(m.away)}<span>${esc(m.away.name)}</span><b>${sc(m.away)}</b></div></div><button class="lv-star ${f ? 'on' : ''}" data-follow="${esc(m.id)}" aria-pressed="${f}" aria-label="${f ? 'Unfollow' : 'Follow'} ${esc(m.home.name)} vs ${esc(m.away.name)}">${f ? 'Following' : 'Follow'}</button></article>`;
 }
 function groups(list) {
   const order = new Map(CFG.leagues.map((l, i) => [l[0], i]));
@@ -239,17 +230,22 @@ function renderDates() {
     const d = dayFromKey(k);
     const lab = k === today ? 'Today' : k === shiftKey(today, -1) ? 'Yesterday' : k === shiftKey(today, 1) ? 'Tomorrow' : new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(d);
     return `<button class="${k === S.dayKey ? 'active' : ''}" data-day="${k}"><small>${esc(lab)}</small><b>${d.getDate()}</b></button>`;
-  }).join('') + `<label class="lv-cal" title="Pick a date">📅<input type="date" id="lv-datepick" value="${S.dayKey.slice(0, 4)}-${S.dayKey.slice(4, 6)}-${S.dayKey.slice(6, 8)}"></label>`;
+  }).join('') + `<label class="lv-cal" title="Pick a date">Calendar<input type="date" id="lv-datepick" value="${S.dayKey.slice(0, 4)}-${S.dayKey.slice(4, 6)}-${S.dayKey.slice(6, 8)}"></label>`;
   root.querySelector('#lv-dates .active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
+function renderChannels() {
+  const channels = CFG.channels || [];
+  root.querySelector('#lv-channels').innerHTML = channels.length ? `<div class="lv-channel-heading"><b>Official sports networks</b><span>Open the licensed service in your region</span></div><div class="lv-channel-row">${channels.map((c) => `<a class="lv-channel" href="${esc(c.url)}" target="_blank" rel="noreferrer"><span class="lv-channel-mark">${esc(c.name.split(/\s+/).map((x) => x[0]).join('').slice(0, 3))}</span><span><b>${esc(c.name)}</b><small>${esc(c.sport)}</small><em>${esc(c.region)}</em></span></a>`).join('')}</div>` : '';
+}
+
 function renderHero() {
   const el = root.querySelector('#lv-hero');
   const all = dayMatches();
   const live = all.filter((m) => m.status === 'live').sort((a, b) => Number(isFollowing(b)) - Number(isFollowing(a)));
   if (S.dayKey === todayKey() && live[0]) {
     const m = live[0], last = [...m.events].reverse()[0];
-    const ico = { goal: '⚽', pen: '⚽', own: '⚽', yellow: '🟨', red: '🟥' };
-    el.innerHTML = `<section class="lv-hero live" data-open="${esc(m.id)}" tabindex="0" role="button"><div class="lv-hero-top"><span>${esc(m.league)}</span>${statusCell(m)}</div><div class="lv-hero-score"><div>${crest(m.home)}<small>${esc(m.home.name)}</small></div><strong>${m.home.score ?? 0}<em>–</em>${m.away.score ?? 0}</strong><div>${crest(m.away)}<small>${esc(m.away.name)}</small></div></div>${last ? `<p class="lv-hero-last">${ico[last.kind] || ''} ${esc(last.minute)} ${esc(last.player)}</p>` : '<p class="lv-hero-last">Tap for match details</p>'}</section>`;
+    const ico = { goal: 'GOAL', pen: 'PEN', own: 'OWN', yellow: 'YC', red: 'RC' };
+    el.innerHTML = `<section class="lv-hero live" data-open="${esc(m.id)}" tabindex="0" role="button"><div class="lv-hero-top"><span>${esc(m.league)}</span>${statusCell(m)}</div><div class="lv-hero-score"><div>${crest(m.home)}<small>${esc(m.home.name)}</small></div><strong>${m.home.score ?? 0}<em>–</em>${m.away.score ?? 0}</strong><div>${crest(m.away)}<small>${esc(m.away.name)}</small></div></div>${last ? `<p class="lv-hero-last">${ico[last.kind] || ''} · ${esc(last.minute)} ${esc(last.player)}</p>` : '<p class="lv-hero-last">Tap for match details</p>'}</section>`;
     return;
   }
   const next = all.filter((m) => m.status === 'scheduled').sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff))[0];
@@ -274,18 +270,18 @@ function renderTabs() {
   const all = dayMatches();
   const cnt = { live: all.filter((m) => m.status === 'live').length, following: all.filter(isFollowing).length };
   const tab = (id, label, n) => `<button class="${S.filter === id ? 'active' : ''}" data-filter="${id}" role="tab" aria-selected="${S.filter === id}">${label}${n ? ` <span>${n}</span>` : ''}</button>`;
-  root.querySelector('#lv-tabs').innerHTML = tab('all', 'All') + tab('live', 'Live', cnt.live) + tab('upcoming', 'Upcoming') + tab('finished', 'Finished') + tab('following', '★ Following', cnt.following);
+  root.querySelector('#lv-tabs').innerHTML = tab('all', 'All') + tab('live', 'Live', cnt.live) + tab('upcoming', 'Upcoming') + tab('finished', 'Finished') + tab('following', 'Following', cnt.following);
   const present = new Set(all.map((m) => m.leagueId));
   root.querySelector('#lv-chips').innerHTML = `<button class="${S.league === 'all' ? 'active' : ''}" data-league="all">All leagues</button>` + CFG.leagues.filter((l) => present.has(l[0]) || S.league === l[0]).map((l) => `<button class="${S.league === l[0] ? 'active' : ''}" data-league="${esc(l[0])}">${esc(l[1])}</button>`).join('');
 }
 function renderList() {
   const el = root.querySelector('#lv-list');
   if (S.firstLoad && !S.pool.size) { el.innerHTML = Array.from({ length: 6 }, () => '<div class="lv-skel"><i></i><div><b></b><b></b></div></div>').join(''); return; }
-  if (S.error && !S.pool.size) { el.innerHTML = `<div class="lv-empty"><div>📡</div><h2>Scores are unavailable</h2><p>${esc(S.error)}</p><button class="primary" data-refresh>Try again</button></div>`; return; }
+  if (S.error && !S.pool.size) { el.innerHTML = `<div class="lv-empty"><div class="lv-empty-mark">OFFLINE</div><h2>Scores are unavailable</h2><p>${esc(S.error)}</p><button class="primary" data-refresh>Try again</button></div>`; return; }
   const list = visible();
   if (!list.length) {
-    const msg = S.filter === 'following' ? 'Tap ☆ on any match, or “Follow team” inside a match, to see it here and get goal alerts.' : S.filter === 'live' ? 'Nothing is live right now. Check Upcoming for what is next.' : 'No matches for these filters on this day.';
-    el.innerHTML = `<div class="lv-empty"><div>⚽</div><h2>No matches here</h2><p>${esc(msg)}</p></div>`; return;
+    const msg = S.filter === 'following' ? 'Tap Follow on any match, or Follow team inside a match, to see it here and get goal alerts.' : S.filter === 'live' ? 'Nothing is live right now. Check Upcoming for what is next.' : 'No matches for these filters on this day.';
+    el.innerHTML = `<div class="lv-empty"><div class="lv-empty-mark">LIVE</div><h2>No matches here</h2><p>${esc(msg)}</p></div>`; return;
   }
   el.innerHTML = groups(list);
 }
@@ -293,12 +289,12 @@ function renderFoot() {
   const el = root.querySelector('#lv-foot');
   const ago = S.updatedAt ? Math.max(0, Math.round((Date.now() - S.updatedAt) / 1000)) : null;
   const when = ago == null ? 'Loading…' : ago < 5 ? 'Updated just now' : ago < 90 ? `Updated ${ago}s ago` : `Updated ${Math.round(ago / 60)} min ago`;
-  el.innerHTML = `<span>${S.offline ? '⚠ You are offline — showing the last scores.' : S.error ? `⚠ ${esc(S.error)}` : S.stale ? `⚠ Provider slow — showing recent data. ${when}` : when}</span><span>Scores by ESPN</span>`;
+  el.innerHTML = `<span>${S.offline ? 'Offline — showing the last scores.' : S.error ? esc(S.error) : S.stale ? `Provider slow — showing recent data. ${when}` : when}</span><span>Live data · refreshes automatically</span>`;
 }
-function renderAll() { if (!mounted) return; renderDates(); renderHero(); renderKpi(); renderTabs(); renderList(); renderFoot(); if (S.openId) renderSheet(); }
+function renderAll() { if (!mounted) return; renderDates(); renderHero(); renderChannels(); renderKpi(); renderTabs(); renderList(); renderFoot(); if (S.openId) renderSheet(); }
 
 function shell() {
-  return `<div class="lv"><section class="lv-head"><div><span class="eyebrow">FREE · LIVE</span><h1>Matchday</h1></div><div class="lv-head-actions"><button class="ghost" data-notif id="lv-notif" aria-label="Notification settings">🔔</button><button class="ghost" data-refresh aria-label="Refresh scores">↻</button></div></section><div class="lv-dates" id="lv-dates" role="tablist" aria-label="Choose a day"></div><div id="lv-hero"></div><div class="lv-kpi" id="lv-kpi"></div><section class="lv-controls"><div class="lv-tabs" id="lv-tabs" role="tablist"></div><label class="lv-search"><span>⌕</span><input id="lv-search" placeholder="Search teams or leagues" autocomplete="off" value="${esc(S.query)}"></label></section><div class="lv-chips" id="lv-chips"></div><div id="lv-list"></div><div class="lv-foot" id="lv-foot"></div><div class="lv-toasts" id="lv-toasts" role="status" aria-live="polite"></div></div>`;
+  return `<div class="lv"><section class="lv-head"><div><span class="eyebrow">LIVE SPORTS</span><h1>Matchday</h1></div><div class="lv-head-actions"><button class="ghost" data-notif id="lv-notif" aria-label="Notification settings">Alerts</button><button class="ghost" data-refresh aria-label="Refresh scores">Refresh</button></div></section><div class="lv-dates" id="lv-dates" role="tablist" aria-label="Choose a day"></div><div id="lv-hero"></div><div class="lv-channels" id="lv-channels"></div><div class="lv-kpi" id="lv-kpi"></div><section class="lv-controls"><div class="lv-tabs" id="lv-tabs" role="tablist"></div><label class="lv-search"><span>⌕</span><input id="lv-search" placeholder="Search teams or leagues" autocomplete="off" value="${esc(S.query)}"></label></section><div class="lv-chips" id="lv-chips"></div><div id="lv-list"></div><div class="lv-foot" id="lv-foot"></div><div class="lv-toasts" id="lv-toasts" role="status" aria-live="polite"></div></div>`;
 }
 
 // ---------- match sheet ----------
@@ -318,12 +314,12 @@ async function shareMatch(m) {
   try { await navigator.clipboard.writeText(`${text} ${location.href}`); toast('Copied to clipboard'); } catch { toast(text); }
 }
 function sheetHtml(m) {
-  const ico = { goal: '⚽', pen: '⚽', own: '⚽', yellow: '🟨', red: '🟥' };
+  const ico = { goal: 'GOAL', pen: 'PEN', own: 'OWN', yellow: 'YC', red: 'RC' };
   const lab = { goal: 'Goal', pen: 'Penalty', own: 'Own goal', yellow: 'Yellow card', red: 'Red card' };
   const ev = m.events.length ? m.events.map((e) => `<li class="${e.side}"><span class="min">${esc(e.minute)}</span><span class="ic" title="${lab[e.kind]}">${ico[e.kind]}</span><span class="who">${esc(e.player || lab[e.kind])}</span></li>`).join('') : `<li class="none">${m.status === 'scheduled' ? 'Events appear here once the match starts.' : 'No goals or cards recorded.'}</li>`;
   const f = isFollowing(m);
   const tf = (t) => S.followT.has(t.id);
-  return `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(`${m.home.name} vs ${m.away.name}`)}"><div class="sheet-grab"></div><div class="lv-sheet-top"><span>${esc(m.league)} · ${esc(fmtDay(m.kickoff))}</span><button class="ghost" data-close aria-label="Close">✕</button></div><div class="lv-sheet-score"><div>${crest(m.home)}<b>${esc(m.home.name)}</b></div><strong>${m.status === 'scheduled' ? esc(fmtTime(m.kickoff)) : `${m.home.score ?? 0} – ${m.away.score ?? 0}`}</strong><div>${crest(m.away)}<b>${esc(m.away.name)}</b></div></div><p class="lv-sheet-status">${m.status === 'live' ? `<span class="lv-live"><i></i>${esc(m.detail || m.clock || 'LIVE')}</span>` : m.status === 'finished' ? 'Full time' : m.status === 'postponed' ? esc(m.detail || 'Postponed') : esc(countdown(m.kickoff))}</p><h3>Key events</h3><ul class="lv-events">${ev}</ul><h3>Where to watch</h3><div class="lv-watch">${m.watch.length ? m.watch.map((w) => `<span>📺 ${esc(w)}</span>`).join('') : '<small>The score provider lists no broadcaster for this match. Check your local sports channel or the competition’s official app.</small>'}</div>${m.venue ? `<h3>Venue</h3><p class="lv-venue">${esc(m.venue)}${m.city ? ` · ${esc(m.city)}` : ''}</p>` : ''}<div class="lv-sheet-actions"><button class="primary" data-follow="${esc(m.id)}">${f && S.followM.has(m.id) ? '★ Following match' : '☆ Follow match'}</button><button class="secondary" data-team="${esc(m.home.id)}">${tf(m.home) ? '★' : '☆'} ${esc(m.home.short || m.home.name)}</button><button class="secondary" data-team="${esc(m.away.id)}">${tf(m.away) ? '★' : '☆'} ${esc(m.away.short || m.away.name)}</button>${m.status === 'scheduled' ? '<button class="secondary" data-ics>📅 Add to calendar</button>' : ''}<button class="ghost" data-share>↗ Share</button></div></div>`;
+  return `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(`${m.home.name} vs ${m.away.name}`)}"><div class="sheet-grab"></div><div class="lv-sheet-top"><span>${esc(m.league)} · ${esc(fmtDay(m.kickoff))}</span><button class="ghost" data-close aria-label="Close">Close</button></div><div class="lv-sheet-score"><div>${crest(m.home)}<b>${esc(m.home.name)}</b></div><strong>${m.status === 'scheduled' ? esc(fmtTime(m.kickoff)) : `${m.home.score ?? 0} – ${m.away.score ?? 0}`}</strong><div>${crest(m.away)}<b>${esc(m.away.name)}</b></div></div><p class="lv-sheet-status">${m.status === 'live' ? `<span class="lv-live"><i></i>${esc(m.detail || m.clock || 'LIVE')}</span>` : m.status === 'finished' ? 'Full time' : m.status === 'postponed' ? esc(m.detail || 'Postponed') : esc(countdown(m.kickoff))}</p><h3>Key events</h3><ul class="lv-events">${ev}</ul><h3>Where to watch</h3><div class="lv-watch">${m.watch.length ? m.watch.map((w) => `<span>${esc(w)}</span>`).join('') : '<small>The score provider lists no broadcaster for this match. Check your local sports channel or the competition’s official app.</small>'}</div>${m.venue ? `<h3>Venue</h3><p class="lv-venue">${esc(m.venue)}${m.city ? ` · ${esc(m.city)}` : ''}</p>` : ''}<div class="lv-sheet-actions"><button class="primary" data-follow="${esc(m.id)}">${f && S.followM.has(m.id) ? 'Following match' : 'Follow match'}</button><button class="secondary" data-team="${esc(m.home.id)}">${tf(m.home) ? 'Following' : 'Follow'} ${esc(m.home.short || m.home.name)}</button><button class="secondary" data-team="${esc(m.away.id)}">${tf(m.away) ? 'Following' : 'Follow'} ${esc(m.away.short || m.away.name)}</button>${m.status === 'scheduled' ? '<button class="secondary" data-ics>Add to calendar</button>' : ''}<button class="ghost" data-share>Share</button></div></div>`;
 }
 function renderSheet() {
   const m = S.pool.get(S.openId);
@@ -446,5 +442,4 @@ function route() { if (isLiveRoute()) mount(); else unmount(); }
 addEventListener('hashchange', route);
 route();
 
-// test hook (harmless in production)
 window.__freeLive = { state: S, refresh, normalize };

@@ -1,7 +1,7 @@
-// Cached, rate-friendly proxy for ESPN's public soccer scoreboard.
-// One browser request returns many leagues, so a refresh costs the client 1 call (not 20+) and ESPN sees at most
+// Cached, rate-friendly proxy for the configured public soccer scoreboard provider.
+// One browser request returns many leagues, so a refresh costs the client 1 call (not 20+) and the provider sees at most
 // one upstream call per league per ~15 s no matter how many people are watching.
-const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
+const SCORE_API_BASE = String(process.env.LIVE_SCORE_API_BASE || 'https://site.api.espn.com/apis/site/v2/sports/soccer').replace(/\/$/, '');
 const LEAGUE = /^[a-z0-9._-]{2,40}$/;
 const DATES = /^\d{8}(-\d{8})?$/;
 const cache = new Map();     // key -> { t, body }
@@ -21,11 +21,11 @@ export async function fetchScoreboard(league, dates, { fetchImpl = fetch, now = 
   if (inflight.has(key)) return inflight.get(key);
   const p = (async () => {
     try {
-      const res = await fetchImpl(`${ESPN}/${encodeURIComponent(league)}/scoreboard?dates=${dates}&limit=300`, {
+      const res = await fetchImpl(`${SCORE_API_BASE}/${encodeURIComponent(league)}/scoreboard?dates=${dates}&limit=300`, {
         headers: { accept: 'application/json', 'user-agent': 'free-live/1.0' },
         signal: AbortSignal.timeout(8000),
       });
-      if (!res.ok) throw Object.assign(new Error(`ESPN HTTP ${res.status}`), { status: res.status });
+      if (!res.ok) throw Object.assign(new Error(`score provider HTTP ${res.status}`), { status: res.status });
       const body = await res.json();
       cache.set(key, { t: now(), body });
       if (cache.size > 600) cache.delete(cache.keys().next().value);

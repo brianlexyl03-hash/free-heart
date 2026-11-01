@@ -1,9 +1,18 @@
 // free❤️‍🔥 Live Match Center configuration.
-// Leagues use ESPN's public league slugs. A slug ESPN does not know is skipped silently.
+// League IDs are resolved by the configured server-side score provider.
 window.__FREE_LIVE_CONFIG = {
   liveRefreshMs: 20000,      // while a match is live
   idleRefreshMs: 60000,      // otherwise
-  reminderMinutes: 15,       // "kicks off soon" reminder for followed matches
+  reminderMinutes: 15,
+  channels: [
+    { id: 'bein', name: 'beIN SPORTS', sport: 'Football and multisport', region: 'Regional availability', url: 'https://www.beinsports.com/en-us' },
+    { id: 'dazn', name: 'DAZN', sport: 'Football, boxing and more', region: 'Country-specific catalogue', url: 'https://www.dazn.com/' },
+    { id: 'tnt', name: 'TNT Sports', sport: 'Football and live sport', region: 'UK, Ireland and US services', url: 'https://www.tntsports.co.uk/' },
+    { id: 'sky', name: 'Sky Sports', sport: 'Football, cricket and motorsport', region: 'UK, Ireland and Italy', url: 'https://www.skysports.com/watch' },
+    { id: 'star', name: 'Star Sports', sport: 'Cricket and Indian sport', region: 'India and authorised partners', url: 'https://www.jiostar.com/' },
+    { id: 'willow', name: 'Willow by Cricbuzz', sport: 'Live cricket', region: 'USA and Canada', url: 'https://www.willow.tv/' },
+    { id: 'fox-cricket', name: 'FOX Cricket', sport: 'Australian cricket', region: 'Australia and authorised partners', url: 'https://www.foxsports.com.au/cricket-' },
+  ],       // "kicks off soon" reminder for followed matches
   leagues: [
     ['eng.1', 'Premier League', 'England'],
     ['esp.1', 'LaLiga', 'Spain'],
