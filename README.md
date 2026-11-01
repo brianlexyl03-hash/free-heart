@@ -89,3 +89,12 @@ See [TEST_REPORT.md](TEST_REPORT.md) for the checks recorded by the project.
 ## Contributing
 
 Issues and pull requests are welcome. Please describe the problem, include reproduction steps where relevant, and run the applicable checks before submitting a change.
+
+## Contact and collaboration
+
+Software engineer open to thoughtful collaboration, engineering discussions and project contributions.
+
+- Email: [brianlexyl03@gmail.com](mailto:brianlexyl03@gmail.com)
+- WhatsApp: [+254 769 485 902](https://wa.me/254769485902)
+
+Please include the repository, issue or feature area in your message.
