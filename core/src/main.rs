@@ -157,10 +157,20 @@ struct HealthResponse {
 }
 
 fn item_response(item: CatalogItem) -> ItemResponse {
+    let public_id = if item.id.provider == ProviderKind::MovieBox
+        && item.id.value.starts_with("wefeedshort~")
+    {
+        format!(
+            "wefeedshort:{}",
+            item.id.value.trim_start_matches("wefeedshort~")
+        )
+    } else {
+        format!("{}:{}", item.id.provider.cache_key(), item.id.value)
+    };
     ItemResponse {
         // Keep the provider in the opaque web ID so playback can route to the
         // same provider that produced the search result.
-        id: format!("{}:{}", item.id.provider.cache_key(), item.id.value),
+        id: public_id,
         title: item.title,
         year: item.year,
         poster: item.poster_url,
@@ -192,7 +202,16 @@ fn title_response(details: MediaDetails) -> TitleResponse {
         })
         .collect();
     TitleResponse {
-        id: format!("{}:{}", details.id.provider.cache_key(), details.id.value),
+        id: if details.id.provider == ProviderKind::MovieBox
+            && details.id.value.starts_with("wefeedshort~")
+        {
+            format!(
+                "wefeedshort:{}",
+                details.id.value.trim_start_matches("wefeedshort~")
+            )
+        } else {
+            format!("{}:{}", details.id.provider.cache_key(), details.id.value)
+        },
         title: details.title,
         year: details.year,
         poster: details.poster_url,
@@ -210,6 +229,19 @@ fn parse_media_id(raw: &str) -> Result<(ProviderKind, String), ApiError> {
         // IDs created by older builds were MovieBox-only IDs.
         return Ok((ProviderKind::MovieBox, raw.to_string()));
     };
+    if provider_name.eq_ignore_ascii_case("wefeedshort") {
+        if subject_id.is_empty() {
+            return Err(ApiError::bad_request("Invalid short-drama id"));
+        }
+        return Ok((
+            ProviderKind::MovieBox,
+            if subject_id.starts_with("wefeedshort~") {
+                subject_id.to_string()
+            } else {
+                format!("wefeedshort~{subject_id}")
+            },
+        ));
+    }
     let provider = ProviderKind::parse(provider_name)
         .ok_or_else(|| ApiError::bad_request("Unknown media provider"))?;
     if subject_id.is_empty() {
