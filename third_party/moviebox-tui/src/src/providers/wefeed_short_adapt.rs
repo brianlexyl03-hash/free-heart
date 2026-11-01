@@ -98,6 +98,13 @@ fn is_catalog_row(value: &Value) -> bool {
         && text(value, &["title", "subjectTitle", "name", "subjectName"]).is_some()
 }
 
+fn is_short_drama_row(value: &Value) -> bool {
+    matches!(
+        text(value, &["subjectType", "type", "mediaType"]).as_deref(),
+        Some("2")
+    )
+}
+
 fn is_metadata_row(value: &Value) -> bool {
     value.is_object() && text(value, &["title", "subjectTitle", "name", "subjectName"]).is_some()
 }
@@ -451,7 +458,10 @@ pub async fn search(
         .search(query, page.max(1), 20)
         .await
         .map_err(api_error)?;
-    let rows = collect_matching(&payload, is_catalog_row, 0);
+    let rows = collect_matching(&payload, is_catalog_row, 0)
+        .into_iter()
+        .filter(is_short_drama_row)
+        .collect::<Vec<_>>();
     Ok(rows.iter().filter_map(catalog_item).collect())
 }
 
@@ -558,10 +568,11 @@ mod tests {
     #[test]
     fn search_response_maps_catalog_rows() {
         let value = json!({"data":{"items":[
-            {"subjectId":"drama-7","title":"Test Drama","cover":"https://cdn.example/poster.jpg","totalEpisode":12}
+            {"subjectId":"drama-7","subjectType":2,"title":"Test Drama","cover":"https://cdn.example/poster.jpg","totalEpisode":12},
+            {"subjectId":"movie-9","subjectType":1,"title":"Ordinary Movie","cover":"https://cdn.example/movie.jpg"}
         ]}});
         let rows = collect_matching(&value, is_catalog_row, 0);
-        let items: Vec<CatalogItem> = rows.iter().filter_map(catalog_item).collect();
+        let items: Vec<CatalogItem> = rows.iter().filter(|row| is_short_drama_row(row)).filter_map(catalog_item).collect();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.value, "wefeedshort~drama-7");
         assert_eq!(items[0].media_type, MediaType::Series);

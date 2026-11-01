@@ -71,7 +71,7 @@ impl WeFeedShortClient {
 
         Self {
             client,
-            base_url: "https://sapi.aoneroom.com".to_string(),
+            base_url: "https://api6.aoneroom.com".to_string(),
             host_parameter: "sapi.aoneroom.com".to_string(),
             user_agent,
             client_info,
@@ -257,48 +257,42 @@ impl WeFeedShortClient {
         .await
     }
 
-    /// POST /wefeed-short-bff/shorts/search
+    /// POST /wefeed-mobile-bff/subject-api/search/v2
     pub async fn search(
         &self,
         keyword: &str,
         page: usize,
         per_page: usize,
     ) -> Result<Value, WeFeedShortError> {
-        let query = vec![
-            ("host", self.host_parameter.clone()),
-        ];
-
         self.request_json(
             Method::POST,
-            "/wefeed-short-bff/shorts/search",
-            &query,
+            "/wefeed-mobile-bff/subject-api/search/v2",
+            &[],
             Some(json!({
                 "keyword": keyword,
                 "perPage": per_page.clamp(1, 50),
-                "page": page.max(1).to_string()
+                "page": page.max(1),
+                "subjectType": 0
             })),
         )
         .await
     }
 
-    /// GET /wefeed-short-bff/shorts/get-info
+    /// GET /wefeed-mobile-bff/subject-api/get
     pub async fn get_info(
         &self,
         subject_id: &str,
     ) -> Result<Value, WeFeedShortError> {
         self.request_json(
             Method::GET,
-            "/wefeed-short-bff/shorts/get-info",
-            &[
-                ("subjectId", subject_id.to_string()),
-                ("host", self.host_parameter.clone()),
-            ],
+            "/wefeed-mobile-bff/subject-api/get",
+            &[("subjectId", subject_id.to_string())],
             None,
         )
         .await
     }
 
-    /// GET /wefeed-short-bff/shorts/mini-list
+    /// GET /wefeed-mobile-bff/subject-api/season-info
     pub async fn mini_list(
         &self,
         subject_id: &str,
@@ -308,14 +302,8 @@ impl WeFeedShortClient {
     ) -> Result<Value, WeFeedShortError> {
         self.request_json(
             Method::GET,
-            "/wefeed-short-bff/shorts/mini-list",
-            &[
-                ("subjectId", subject_id.to_string()),
-                ("startPosition", start_position.to_string()),
-                ("endPosition", end_position.to_string()),
-                ("pagerMode", pager_mode.to_string()),
-                ("host", self.host_parameter.clone()),
-            ],
+            "/wefeed-mobile-bff/subject-api/season-info",
+            &[("subjectId", subject_id.to_string())],
             None,
         )
         .await
@@ -330,14 +318,9 @@ impl WeFeedShortClient {
         resolution: Option<&str>,
     ) -> Result<Value, WeFeedShortError> {
         let mut query = vec![
-            ("host", self.host_parameter.clone()),
             ("subjectId", subject_id.to_string()),
             ("page", page.max(1).to_string()),
             ("perPage", per_page.clamp(1, 50).to_string()),
-            ("all", "0".to_string()),
-            ("startPosition", "0".to_string()),
-            ("endPosition", per_page.clamp(1, 50).to_string()),
-            ("pagerMode", "1".to_string()),
         ];
 
         if let Some(resolution) = resolution {
@@ -346,7 +329,7 @@ impl WeFeedShortClient {
 
         self.request_json(
             Method::GET,
-            "/wefeed-short-bff/subject-api/resource",
+            "/wefeed-mobile-bff/subject-api/resource",
             &query,
             None,
         )
