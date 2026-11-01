@@ -24,6 +24,10 @@ pub struct WeFeedShortClient {
     auth_client: crate::providers::moviebox::client::MovieBoxClient,
 }
 
+fn encode_query_component(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
 #[derive(Debug)]
 pub enum WeFeedShortError {
     Network(String),
@@ -264,18 +268,18 @@ impl WeFeedShortClient {
         page: usize,
         per_page: usize,
     ) -> Result<Value, WeFeedShortError> {
-        self.request_json(
-            Method::POST,
-            "/wefeed-mobile-bff/subject-api/search/v2",
-            &[],
-            Some(json!({
+        self.auth_client
+            .post(
+                "/wefeed-mobile-bff/subject-api/search/v2",
+                &json!({
                 "keyword": keyword,
                 "perPage": per_page.clamp(1, 50),
                 "page": page.max(1),
                 "subjectType": 0
-            })),
-        )
-        .await
+                }),
+            )
+            .await
+            .map_err(|error| WeFeedShortError::Network(error.to_string()))
     }
 
     /// GET /wefeed-mobile-bff/subject-api/get
@@ -283,30 +287,30 @@ impl WeFeedShortClient {
         &self,
         subject_id: &str,
     ) -> Result<Value, WeFeedShortError> {
-        self.request_json(
-            Method::GET,
-            "/wefeed-mobile-bff/subject-api/get",
-            &[("subjectId", subject_id.to_string())],
-            None,
-        )
-        .await
+        self.auth_client
+            .get(&format!(
+                "/wefeed-mobile-bff/subject-api/get?subjectId={}",
+                encode_query_component(subject_id)
+            ))
+            .await
+            .map_err(|error| WeFeedShortError::Network(error.to_string()))
     }
 
     /// GET /wefeed-mobile-bff/subject-api/season-info
     pub async fn mini_list(
         &self,
         subject_id: &str,
-        start_position: usize,
-        end_position: usize,
-        pager_mode: &str,
+        _start_position: usize,
+        _end_position: usize,
+        _pager_mode: &str,
     ) -> Result<Value, WeFeedShortError> {
-        self.request_json(
-            Method::GET,
-            "/wefeed-mobile-bff/subject-api/season-info",
-            &[("subjectId", subject_id.to_string())],
-            None,
-        )
-        .await
+        self.auth_client
+            .get(&format!(
+                "/wefeed-mobile-bff/subject-api/season-info?subjectId={}",
+                encode_query_component(subject_id)
+            ))
+            .await
+            .map_err(|error| WeFeedShortError::Network(error.to_string()))
     }
 
     /// GET /wefeed-short-bff/subject-api/resource
@@ -317,23 +321,22 @@ impl WeFeedShortClient {
         per_page: usize,
         resolution: Option<&str>,
     ) -> Result<Value, WeFeedShortError> {
-        let mut query = vec![
-            ("subjectId", subject_id.to_string()),
-            ("page", page.max(1).to_string()),
-            ("perPage", per_page.clamp(1, 50).to_string()),
-        ];
-
+        let mut query = format!(
+            "subjectId={}&page={}&perPage={}",
+            encode_query_component(subject_id),
+            page.max(1),
+            per_page.clamp(1, 50)
+        );
         if let Some(resolution) = resolution {
-            query.push(("resolution", resolution.to_string()));
+            query.push_str("&resolution=");
+            query.push_str(&encode_query_component(resolution));
         }
-
-        self.request_json(
-            Method::GET,
-            "/wefeed-mobile-bff/subject-api/resource",
-            &query,
-            None,
-        )
-        .await
+        self.auth_client
+            .get(&format!(
+                "/wefeed-mobile-bff/subject-api/resource?{query}"
+            ))
+            .await
+            .map_err(|error| WeFeedShortError::Network(error.to_string()))
     }
 
     /// GET /wefeed-short-bff/subject-api/resource-position
