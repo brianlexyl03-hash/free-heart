@@ -58,7 +58,9 @@ export function diff(prev, m, now = Date.now(), reminderMin = 15) {
 
 export async function pollOnce({ fetchImpl, sendTo, now = Date.now, leagues = LEAGUES } = {}) {
   if (!follows.size) return { skipped: true };
-  const dates = `${ymd(now() - 86400000)}-${ymd(now() + 86400000)}`;
+  // The configured scoreboard provider accepts one calendar date per request.
+  // Live alerts only need today's fixtures; this also keeps kick-off reminders reliable.
+  const dates = ymd(now());
   const next = new Map();
   let i = 0, fetched = 0;
   const alerts = [];

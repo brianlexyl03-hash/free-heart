@@ -103,7 +103,8 @@ async function loadDay(force = false) {
   if (!stale.length) return;
   let anyOk = false, anyStale = false;
   for (const k of stale) {
-    const dates = `${shiftKey(k, -1)}-${shiftKey(k, 1)}`;
+    // The configured scoreboard provider accepts one calendar date per request.
+    const dates = k;
     const { results, stale: st } = await fetchRange(dates);
     for (const meta of CFG.leagues) {
       const data = results[meta[0]];
