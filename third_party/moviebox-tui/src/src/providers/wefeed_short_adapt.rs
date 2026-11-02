@@ -305,6 +305,15 @@ fn valid_video_url(raw: &str) -> bool {
     .any(|extension| path.ends_with(extension))
 }
 
+fn is_known_interstitial_url(raw: &str) -> bool {
+    let lower = raw.to_ascii_lowercase();
+    lower.contains("/notice.mp4")
+        || lower.contains("macdn.aoneroom.com/other/")
+        || lower.contains("1c7de0bd3393702d9191801f15f88f8d")
+        || lower.contains("9a0461bc39da389663bf3dbb17091d3f")
+        || lower.contains("b164fbfb4347792950bdfbfb563d39d9")
+}
+
 fn push_valid_url(found: &mut Vec<String>, candidate: Option<String>) {
     if let Some(candidate) = candidate {
         let candidate = candidate.trim().to_string();
@@ -426,6 +435,43 @@ fn releases_from_payload(
     output
 }
 
+fn play_info_releases(payload: &Value, requested_season: usize, requested_episode: usize) -> Vec<Release> {
+    let data = payload.get("data").unwrap_or(payload);
+    let title = text(data, &["title", "name"]).unwrap_or_else(|| "WeFeed Short".to_string());
+    let display_quality = text(data, &["displayResolutions", "resolutions"]);
+    let Some(streams) = data.get("streams").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for stream in streams {
+        let Some(url) = text(stream, &["url", "streamUrl", "playUrl"]) else { continue; };
+        if !valid_video_url(&url) || is_known_interstitial_url(&url) || !seen.insert(url.clone()) { continue; }
+        let quality = text(stream, &["resolution", "quality"])
+            .or_else(|| display_quality.clone())
+            .map(normalize_quality);
+        let size_bytes = number(stream, &["size", "sizeBytes"]).map(|v| v as u64);
+        output.push(Release {
+            provider: ProviderKind::MovieBox,
+            filename: title.clone(),
+            quality,
+            codec: text(stream, &["codecName", "codec"]),
+            language: text(stream, &["language", "lanName"]),
+            size_bytes,
+            season: (requested_season > 0).then_some(requested_season),
+            episode: (requested_episode > 0).then_some(requested_episode),
+            mirrors: vec![SourceMirror {
+                label: "WeFeed Play Info".to_string(),
+                resolver_url: url,
+                headers: Vec::new(),
+                direct_file: true,
+            }],
+            resource_id: text(stream, &["resourceId", "resource_id", "id"]),
+        });
+    }
+    output
+}
+
 fn normalize_quality(value: String) -> String {
     if value.ends_with('p')
         || value.ends_with('P')
@@ -531,15 +577,17 @@ pub async fn releases(
     episode: usize,
 ) -> Result<Vec<Release>, ProviderError> {
     let id = source_id(namespaced_or_raw_id)?;
-    if let Ok(payload) = client.mini_list(id, 0, 500, "0").await {
-        let releases = releases_from_payload(&payload, season, episode);
+    // The current authenticated playback endpoint is preferred. The older
+    // season-info response can contain a catalog-wide update/interstitial MP4
+    // repeated for every episode, so it must not win when resource rows exist.
+    if let Ok(payload) = client.play_info(id, season, episode).await {
+        let releases = play_info_releases(&payload, season, episode);
         if !releases.is_empty() {
             return Ok(releases);
         }
     }
-    // Resource endpoints may carry an explicit URL and an episode number. They
-    // are a fallback only; rows without episode identity are not used for an
-    // episode-specific request to avoid playing a different episode by mistake.
+    // The resource endpoint is the current mirror contract. The older
+    // season-info response can contain a catalog-wide update/interstitial MP4.
     if let Ok(payload) = client.resource_page(id, 1, 50, None).await {
         let releases = releases_from_payload(&payload, season, episode);
         if !releases.is_empty() {
@@ -547,7 +595,7 @@ pub async fn releases(
         }
     }
     Err(ProviderError::Unavailable(
-        "WeFeed Short returned no directly playable URL for the requested episode".to_string(),
+        "WeFeed Short returned no current playable URL for the requested episode".to_string(),
     ))
 }
 

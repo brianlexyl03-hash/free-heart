@@ -140,7 +140,9 @@ async function api(path, options = {}) {
 }
 
 function errBox(error) {
-  const message = error.code === 'core_unavailable'
+  const message = /no current playable url|interstitial|promotional clip/i.test(String(error.message || ''))
+    ? 'This episode source is being refreshed. Try another episode or press Play again in a moment.'
+    : error.code === 'core_unavailable'
     ? 'Playback services are waking up. Try again in a moment.'
     : error.message || 'This source rejected the request. Choose another quality or try again later.';
   const title = error.status === 402 ? 'Payment required' : error.code === 'offline' ? 'You are offline' : 'Something went wrong';

@@ -339,6 +339,30 @@ impl WeFeedShortClient {
             .map_err(|error| WeFeedShortError::Network(error.to_string()))
     }
 
+    /// GET /wefeed-mobile-bff/subject-api/play-info/v2
+    ///
+    /// This is the current authenticated playback contract. It is preferred
+    /// over catalog metadata URLs, which may be update/interstitial media.
+    pub async fn play_info(
+        &self,
+        subject_id: &str,
+        season: usize,
+        episode: usize,
+    ) -> Result<Value, WeFeedShortError> {
+        let query = format!(
+            "subjectId={}&se={}&ep={}",
+            encode_query_component(subject_id),
+            season,
+            episode,
+        );
+        self.auth_client
+            .get(&format!(
+                "/wefeed-mobile-bff/subject-api/play-info/v2?{query}"
+            ))
+            .await
+            .map_err(|error| WeFeedShortError::Network(error.to_string()))
+    }
+
     /// GET /wefeed-short-bff/subject-api/resource-position
     pub async fn resource_position(
         &self,
