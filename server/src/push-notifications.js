@@ -15,8 +15,9 @@ const PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 const SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
 
 function assertConfig() {
-  if (!PUBLIC_KEY || !PRIVATE_KEY) throw new Error('VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required');
+  if (!PUBLIC_KEY || !PRIVATE_KEY) return false;
   webpush.setVapidDetails(SUBJECT, PUBLIC_KEY, PRIVATE_KEY);
+  return true;
 }
 function read() {
   try { return JSON.parse(fs.readFileSync(DB, 'utf8')); } catch { return []; }
@@ -27,10 +28,14 @@ function write(items) {
 }
 
 export function registerPushRoutes(fastify) {
-  assertConfig();
-  fastify.get('/api/push/public-key', async () => ({ publicKey: PUBLIC_KEY }));
+  const enabled = assertConfig();
+  fastify.get('/api/push/public-key', async (_req, reply) => {
+    if (!enabled) return reply.code(503).send({ error: 'push_not_configured', message: 'Web Push is not configured on this service.' });
+    return { publicKey: PUBLIC_KEY };
+  });
 
   fastify.post('/api/push/subscribe', async (req, reply) => {
+    if (!enabled) return reply.code(503).send({ error: 'push_not_configured', message: 'Web Push is not configured on this service.' });
     const sub = req.body?.subscription || req.body;
     if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) return reply.code(400).send({ error: 'Invalid push subscription' });
     const items = read();
@@ -50,6 +55,7 @@ export function registerPushRoutes(fastify) {
   });
 
   fastify.post('/api/push/test', async (req, reply) => {
+    if (!enabled) return reply.code(503).send({ error: 'push_not_configured', message: 'Web Push is not configured on this service.' });
     const title = req.body?.title || 'You might like this 🎬';
     const body = req.body?.body || 'A movie picked for you from what is trending now.';
     const url = req.body?.url || '/#/';
@@ -59,6 +65,7 @@ export function registerPushRoutes(fastify) {
 }
 
 export async function sendToAll({ title, body, url, image, tag }) {
+  if (!PUBLIC_KEY || !PRIVATE_KEY) return { ok: false, disabled: true, sent: 0, failed: 0, removed: 0 };
   const items = read();
   let sent = 0, removed = 0, failed = 0;
   for (const item of items) {
@@ -84,6 +91,7 @@ export function hasSubscription(endpoint) {
 }
 
 export async function sendToEndpoint(endpoint, { title, body, url, image, tag }) {
+  if (!PUBLIC_KEY || !PRIVATE_KEY) return { ok: false, disabled: true };
   const items = read();
   const item = items.find((entry) => entry.endpoint === endpoint && entry.enabled);
   if (!item) return { ok: false, gone: true };
@@ -101,4 +109,3 @@ export async function sendToEndpoint(endpoint, { title, body, url, image, tag })
     return { ok: false, error: error.statusCode || 'error' };
   }
 }
-
