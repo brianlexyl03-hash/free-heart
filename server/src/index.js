@@ -150,9 +150,9 @@ const AI_BASE_URL = process.env.AI_BASE_URL || '';
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
 let adConfig = {
-  enabled: Boolean(process.env.AD_URL),
-  url: process.env.AD_URL || '',
-  durationSeconds: Math.min(9, Math.max(1, Number(process.env.AD_DURATION_SECONDS || 5))),
+  enabled: false,
+  url: '',
+  durationSeconds: 0,
 };
 
 function assertPublicHttp(u) {
@@ -330,11 +330,7 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
   };
 });
 
-app.get('/api/ad-config', async () => ({
-  enabled: Boolean(adConfig.enabled && adConfig.url),
-  url: adConfig.enabled ? adConfig.url : '',
-  durationSeconds: adConfig.durationSeconds,
-}));
+app.get('/api/ad-config', async () => ({ enabled: false, url: '', durationSeconds: 0 }));
 
 app.post('/api/admin/check', async (req, reply) => {
   if (!ADMIN_PASSWORD || req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
@@ -347,13 +343,13 @@ app.put('/api/admin/ad', async (req, reply) => {
   if (!ADMIN_PASSWORD || req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
     return reply.code(401).send({ error: 'unauthorized', message: 'Admin password required' });
   }
-  const body = z.object({
-    enabled: z.boolean().default(true),
-    url: z.string().url().startsWith('https://'),
-    durationSeconds: z.coerce.number().int().min(1).max(9),
-  }).parse(req.body);
-  adConfig = body;
-  return { enabled: adConfig.enabled, durationSeconds: adConfig.durationSeconds };
+  z.object({
+    enabled: z.boolean().optional(),
+    url: z.string().url().optional(),
+    durationSeconds: z.coerce.number().int().min(0).max(9).optional(),
+  }).parse(req.body || {});
+  adConfig = { enabled: false, url: '', durationSeconds: 0 };
+  return { enabled: false, durationSeconds: 0 };
 });
 
 function upstreamMessage(status) {

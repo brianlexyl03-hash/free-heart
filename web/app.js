@@ -155,40 +155,6 @@ const resolveStream = (id, episode, resolution) => api('/api/resolve', {
   body: JSON.stringify({ id, episode: episode || undefined, resolution: resolution || undefined }),
 });
 
-let adConfigPromise;
-function getAdConfig() {
-  adConfigPromise ||= api('/api/ad-config').catch(() => ({ enabled: false }));
-  return adConfigPromise;
-}
-
-function showAdGate(reason = 'Continue') {
-  return getAdConfig().then((ad) => new Promise((resolve) => {
-    if (!ad.enabled || !ad.url) return resolve(true);
-    const seconds = Math.min(9, Math.max(1, Number(ad.durationSeconds || 5)));
-    const overlay = document.createElement('div');
-    overlay.className = 'ad-layer';
-    overlay.innerHTML = `<div class="ad-card"><div class="ad-label">Sponsored</div><p>${esc(reason)}</p><video id="ad-video" muted autoplay playsinline></video><div class="ad-timer">Ad · <b>${seconds}</b>s</div><button id="ad-continue" disabled>Continue</button></div>`;
-    document.body.appendChild(overlay);
-    const video = overlay.querySelector('#ad-video');
-    const button = overlay.querySelector('#ad-continue');
-    const timer = overlay.querySelector('b');
-    video.src = ad.url;
-    let left = seconds;
-    const interval = setInterval(() => {
-      left -= 1;
-      timer.textContent = Math.max(left, 0);
-      if (left <= 0) {
-        clearInterval(interval);
-        button.disabled = false;
-        button.textContent = 'Continue';
-      }
-    }, 1000);
-    const finish = () => { clearInterval(interval); overlay.remove(); resolve(true); };
-    button.onclick = finish;
-    video.onerror = () => { if (left <= 0) finish(); };
-  }));
-}
-
 function qualitySelect(resolutions = [], selected) {
   if (!resolutions.length) return '';
   const labels = resolutions.map((r) => `<option value="${r}" ${Number(r) === Number(selected) ? 'selected' : ''}>${r >= 2160 ? '4K' : `${r}p`}</option>`).join('');
@@ -429,7 +395,6 @@ async function watchPage(id, episode) {
     const message = document.getElementById('player-message');
     const posKey = `free.pos.${id}|${episode || ''}`;
     const subs = (r) => (r.subtitles || []).map((s) => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) }));
-    let adShown = false;
     let vp;
     const switchQuality = async (r) => {
       message.textContent = 'Switching quality…';
@@ -447,13 +412,6 @@ async function watchPage(id, episode) {
       startAt: Number(localStorage.getItem(posKey) || 0),
       onProgress: async (t, d) => {
         try { if (Number.isFinite(d) && d - t < 60) localStorage.removeItem(posKey); else localStorage.setItem(posKey, String(Math.floor(t))); } catch { /* ignore */ }
-        if (!adShown && t >= 3000) {
-          adShown = true;
-          vp.video.pause();
-          if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
-          await showAdGate('Thanks for watching. Continue when you’re ready.');
-          await vp.video.play().catch(() => {});
-        }
       },
       onQuality: switchQuality,
       onClip: (video) => mountClipEditor(document.getElementById('clip-editor'), { video, title }),
@@ -553,7 +511,6 @@ async function queueDownloads({ id, data, items, resolution, out }) {
   if (!('serviceWorker' in navigator)) { out.innerHTML = '<div class="notice error">Background downloads are not supported by this browser.</div>'; return; }
   const di = matureInfo({ id, title: data.title, overview: data.overview });
   if (di.mature && !(await confirmAccess({ id, title: data.title, reasons: di.reasons }))) return;
-  await showAdGate('Watch this short ad before your download starts.');
   const fresh = [];
   let skipped = 0;
   const base = Date.now();
