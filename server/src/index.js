@@ -148,6 +148,14 @@ const SOCIAL_WHATSAPP_URL = process.env.SOCIAL_WHATSAPP_URL || '';
 const PUBLIC_SITE_URL = String(process.env.PUBLIC_SITE_URL || '').replace(/\/$/, '');
 const SITEGUARD_API_URL = String(process.env.SITEGUARD_API_URL || '').replace(/\/$/, '');
 const SITEGUARD_API_KEY = String(process.env.SITEGUARD_API_KEY || '');
+const SITEGUARD_TELEMETRY_KEY = String(process.env.SITEGUARD_TELEMETRY_KEY || '');
+const SITEGUARD_SITE_ID = String(process.env.SITEGUARD_SITE_ID || 'free-heart');
+let siteGuardRequestCount = 0;
+app.addHook('onRequest', async (req) => {
+  if (SITEGUARD_API_URL && SITEGUARD_API_KEY && SITEGUARD_TELEMETRY_KEY
+      && !req.url.startsWith('/siteguard-api/')
+      && !req.url.startsWith('/api/health')) siteGuardRequestCount += 1;
+});
 const AI_BASE_URL = process.env.AI_BASE_URL || '';
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
@@ -638,6 +646,30 @@ const port = Number(process.env.PORT || 3000);
 startAutomaticPush();
 
 await app.listen({ port, host: process.env.HOST || '0.0.0.0' });
+
+if (SITEGUARD_API_URL && SITEGUARD_API_KEY && SITEGUARD_TELEMETRY_KEY) {
+  setInterval(async () => {
+    const requests = siteGuardRequestCount;
+    siteGuardRequestCount = 0;
+    if (!requests) return;
+    try {
+      const response = await fetch(`${SITEGUARD_API_URL}/v1/telemetry`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': SITEGUARD_API_KEY,
+          'x-site-telemetry-key': SITEGUARD_TELEMETRY_KEY
+        },
+        body: JSON.stringify({ site_id: SITEGUARD_SITE_ID, requests, window_seconds: 10 }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!response.ok) app.log.warn({ status: response.status }, 'SiteGuard telemetry was rejected');
+    } catch {
+      app.log.warn('SiteGuard telemetry delivery failed');
+    }
+  }, 10000).unref();
+  app.log.info({ site_id: SITEGUARD_SITE_ID }, 'SiteGuard traffic telemetry enabled');
+}
 
 
 // Render free tier sleeps after ~15 min idle (cold start = 502). Ping ourselves to stay awake.
