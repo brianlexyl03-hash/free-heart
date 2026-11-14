@@ -39,6 +39,8 @@ MovieBox runtime validation now starts before the browser player: MovieBox-TUI's
 
 Adaptive playback now keeps Auto HLS untouched when the provider supplies a genuine multivariant manifest. Explicit 1080p, 720p, 540p, 480p, and 360p requests—including HLS sources that expose only one variant—are routed through FFmpeg with capped bitrate ladders, fragmented MP4 output, keyframes every 48 frames, and zero-latency x264 settings. The browser preserves the current position during a quality switch, and overlapping switches are prevented so a slow network does not start competing transcodes.
 
+Verification is fail-open only for an inconclusive probe: a signed CDN or HLS URL that FFprobe cannot inspect is not labelled as an ad. It proceeds to the normal streamed-response checks, which still reject HTML, empty responses, and tiny non-video payloads. Confirmed no-video or short-interstitial probes remain rejected.
+
 The upstream BDIX CircleFTP and DhakaFlix providers use private `172.16.x.x` network addresses; they are intentionally not enabled for a public Render service because those addresses are not internet-facing sources.
 
 ## Apply from Termux

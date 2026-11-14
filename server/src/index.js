@@ -379,6 +379,11 @@ app.post('/api/verify', { config: { rateLimit: { max: 180, timeWindow: '1 minute
   entry.exp = Date.now() + TTL;
   if (!haveFfmpeg()) return { verified: null, playable: true, reason: 'probe_unavailable' };
   const info = await probe(entry.url, entry.headers || {}, 7000);
+  // Signed CDNs and some HLS manifests can be valid while refusing an
+  // out-of-band ffprobe request. Do not turn an inconclusive probe into a
+  // false "ad-only" verdict; the streamed response is still checked below
+  // by the downloader for HTML, empty data, and tiny non-video payloads.
+  if (!info) return { verified: null, playable: null, reason: 'probe_inconclusive' };
   const shortInterstitial = !body.allowShortMedia && Number.isFinite(info?.duration) && info.duration >= 8 && info.duration <= 30;
   const runtimeMismatch = entry.expectedDuration && Number.isFinite(info?.duration)
     && info.duration < Math.max(45, entry.expectedDuration * 0.45);
