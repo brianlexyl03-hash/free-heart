@@ -28,6 +28,16 @@ const app = Fastify({
   },
 });
 
+// SiteGuard-inspired operational telemetry. It stays in memory and never stores
+// visitor IPs, titles, cookies, or full URLs.
+const siteGuard = { startedAt: Date.now(), requests: 0, responses: 0, errors: 0, blocked: 0, lastEventAt: null };
+app.addHook('onRequest', async () => { siteGuard.requests += 1; siteGuard.lastEventAt = new Date().toISOString(); });
+app.addHook('onResponse', async (_req, reply) => {
+  siteGuard.responses += 1;
+  if (reply.statusCode >= 500) siteGuard.errors += 1;
+  if (reply.statusCode === 429) siteGuard.blocked += 1;
+});
+
 await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
 
 registerPushRoutes(app);
@@ -197,6 +207,19 @@ app.get('/api/health', async () => {
     return { ok: true, core: false };
   }
 });
+
+app.get('/api/siteguard/status', async () => ({
+  ok: siteGuard.errors < 10,
+  service: 'SiteGuard',
+  mode: 'embedded-defensive-monitor',
+  uptimeSeconds: Math.floor((Date.now() - siteGuard.startedAt) / 1000),
+  requests: siteGuard.requests,
+  responses: siteGuard.responses,
+  errors: siteGuard.errors,
+  blocked: siteGuard.blocked,
+  lastEventAt: siteGuard.lastEventAt,
+  protections: ['global rate limiting', 'opaque stream tokens', 'private-network URL blocking', 'security response headers', 'resolver failover'],
+}));
 
 app.get('/api/search', async (req) => {
   const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
