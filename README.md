@@ -102,3 +102,12 @@ Please include the repository, issue or feature area in your message.
 ## Developer portfolio and releases
 
 See the [central project, download and achievement index](https://github.com/brianlexyl03-hash/fuskamo/blob/main/PORTFOLIO.md) for verified APK downloads, web-app deployment status, engineering achievements and collaboration details.
+
+
+## SiteGuard security operations
+
+Free Heart includes a SiteGuard operations area at `/siteguard/`. It is linked from the main navigation and served by the existing Fastify website. The console uses a same-origin proxy at `/siteguard-api/*`; the SiteGuard API key is kept on the server and is not exposed to browser code.
+
+Configure `SITEGUARD_API_URL` (the HTTPS base URL of the separate SiteGuard FastAPI service) and `SITEGUARD_API_KEY` (the same secret as the SiteGuard service's `API_KEY`). The operator signs in using the existing Free Heart `ADMIN_PASSWORD`. Keep both server secrets in Render Environment settings, never in the repository.
+
+The SiteGuard FastAPI service must be deployed separately from the supplied SiteGuard package. Configure a persistent PostgreSQL database and replace all sample secrets before production. The supplied mock provisioner does not scale live Free Heart workloads; real scaling requires a Kubernetes cluster, a scoped service account/RBAC, and an operator-approved deployment. Quarantine records do not block production traffic unless an ingress or edge firewall consumes the block-list endpoint. The console reports service errors rather than showing fabricated telemetry when the backend is not configured.
