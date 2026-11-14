@@ -2,12 +2,14 @@
 //   Direct Play -> Direct Stream (remux; audio may be converted) -> Transcode.
 // Only container / audio / HEVC-tag problems are fixed by remuxing. A video problem needs a transcode.
 import { spawn, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 const SAFE_AUDIO = new Set(['aac', 'mp3']);            // always fine in MP4 for browsers
 const COPY_IN_MP4 = new Set(['aac', 'mp3', 'ac3', 'eac3']); // can be stream-copied into MP4
 const MAX_JOBS = 2;
 let active = 0;
 let toolsOk = null;
+let encoderChoice = null;
 
 export function haveFfmpeg() {
   if (toolsOk === null) toolsOk = spawnSync('ffmpeg', ['-version']).status === 0 && spawnSync('ffprobe', ['-version']).status === 0;
@@ -95,6 +97,25 @@ export function withTargetResolution(plan, info, targetResolution) {
   return { ...plan, mode: 'transcode', targetHeight: Math.round(target), audio: 'aac', why: `requested ${Math.round(target)}p playback` };
 }
 
+function availableEncoder() {
+  if (encoderChoice) return encoderChoice;
+  const requested = String(process.env.TRANSCODE_ENCODER || 'auto').toLowerCase();
+  if (requested === 'libx264') return (encoderChoice = 'libx264');
+  let encoders = '';
+  try { encoders = String(spawnSync('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf8' }).stdout || ''); } catch { /* use software */ }
+  const hasNvenc = /\bh264_nvenc\b/.test(encoders) && (existsSync('/dev/nvidia0') || existsSync('/dev/nvidiactl'));
+  const hasQsv = /\bh264_qsv\b/.test(encoders) && existsSync('/dev/dri/renderD128');
+  if (requested === 'h264_nvenc' && /\bh264_nvenc\b/.test(encoders)) return (encoderChoice = 'h264_nvenc');
+  if (requested === 'h264_qsv' && /\bh264_qsv\b/.test(encoders)) return (encoderChoice = 'h264_qsv');
+  return (encoderChoice = hasNvenc ? 'h264_nvenc' : hasQsv ? 'h264_qsv' : 'libx264');
+}
+
+function encoderArgs(encoder, videoRate) {
+  if (encoder === 'h264_nvenc') return ['-c:v', encoder, '-preset', 'p4', '-tune', 'll', '-rc', 'vbr', '-cq', '28', '-b:v', videoRate, '-maxrate', videoRate];
+  if (encoder === 'h264_qsv') return ['-c:v', encoder, '-preset', 'veryfast', '-global_quality', '27', '-b:v', videoRate, '-maxrate', videoRate];
+  return ['-c:v', encoder, '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '28', '-b:v', videoRate, '-maxrate', videoRate];
+}
+
 export function remuxArgs(url, headers, plan) {
   const a = ['-hide_banner', '-loglevel', 'error', '-fflags', '+genpts', ...inputArgs(url, headers),
     '-map_metadata', '-1', '-map_chapters', '-1', '-map', '0:v:0', '-map', '0:a:0?', '-sn'];
@@ -102,14 +123,14 @@ export function remuxArgs(url, headers, plan) {
     const maxHeight = Math.max(144, Math.min(4320, Number(plan.targetHeight) || 720));
     const videoRate = maxHeight >= 1080 ? '5000k' : maxHeight >= 720 ? '3500k' : maxHeight >= 540 ? '2200k' : maxHeight >= 480 ? '1600k' : '900k';
     const bufferRate = maxHeight >= 1080 ? '10000k' : maxHeight >= 720 ? '7000k' : maxHeight >= 540 ? '4400k' : maxHeight >= 480 ? '3200k' : '1800k';
-    a.push('-vf', `scale=-2:min(${maxHeight}\\,ih)`, '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '28', '-b:v', videoRate, '-maxrate', videoRate, '-bufsize', bufferRate, '-pix_fmt', 'yuv420p', '-g', '48', '-sc_threshold', '0');
+    a.push('-vf', `scale=-2:min(${maxHeight}\\,ih)`, ...encoderArgs(availableEncoder(), videoRate), '-bufsize', bufferRate, '-pix_fmt', 'yuv420p', '-g', '48', '-keyint_min', '48', '-sc_threshold', '0', '-force_key_frames', 'expr:gte(t,n_forced*2)');
   } else {
     a.push('-c:v', 'copy');
     if (plan.tagHevc) a.push('-tag:v', 'hvc1');
   }
   if (plan.audio === 'copy') a.push('-c:a', 'copy');
   else a.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2');
-  a.push('-movflags', plan.delayMoov ? 'frag_keyframe+empty_moov+delay_moov+default_base_moof' : 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1');
+  a.push('-flush_packets', '1', '-max_interleave_delta', '0', '-movflags', plan.delayMoov ? 'frag_keyframe+empty_moov+delay_moov+default_base_moof' : 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1');
   return a;
 }
 

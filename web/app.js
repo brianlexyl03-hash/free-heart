@@ -1,5 +1,6 @@
 import { mountPlayer } from './player.js';
 import { mountClipEditor } from './clipper.js';
+import { ABR_CONFIG, networkProfile, capLadder, capQuality, newAbrState, updateEstimate, chooseNext, logLevelSwitched } from './abr.js';
 import { info as matureInfo, confirmAccess, getMode, setMode, flag, unflag, markConfirmed } from './maturity.js';
 const app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -425,18 +426,26 @@ function playerHint(kind) {
 async function watchPage(id, episode) {
   app.innerHTML = '<div class="loading"><i></i><span>Preparing your stream…</span></div>';
   try {
-    const [first, meta] = await Promise.all([resolveStream(id, episode), api(`/api/title/${encodeURIComponent(id)}`).catch(() => null)]);
+    const [firstResponse, meta] = await Promise.all([resolveStream(id, episode), api(`/api/title/${encodeURIComponent(id)}`).catch(() => null)]);
+    const profile = networkProfile();
+    let first = firstResponse;
+    const advertised = (first.resolutions || []).map(Number).filter((height) => Number.isFinite(height));
+    const cellularCap = Number(profile.maxHeight) || 0;
+    if (cellularCap && advertised.some((height) => height > cellularCap)) {
+      try { first = await resolveStream(id, episode, cellularCap); } catch { /* keep the already playable source */ }
+    }
     const wi = matureInfo({ id, title: meta?.title, overview: meta?.overview });
     if (wi.mature && !(await confirmAccess({ id, title: meta?.title || 'This title', reasons: wi.reasons }))) { location.hash = '#/'; return; }
     let resolved = first;
     let candidateIndex = 0;
     const epLabel = episode ? ((meta?.episodes || []).find((e) => e.key === episode)?.label || episode) : '';
     const title = meta ? `${meta.title}${epLabel ? ` · ${epLabel}` : ''}` : (epLabel || 'Now playing');
-    let res = resolved.selectedResolution;
+    let res = capQuality(resolved.selectedResolution, profile);
     let autoQuality = true;
     let lastAdapt = 0;
+    let abrState = newAbrState(profile);
     let switchingQuality = false;
-    app.innerHTML = `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="vp-host" class="vp-host"></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>${esc(title)}</h2></div>${qualitySelect(resolved.resolutions, res)}</div><div id="player-message" class="notice subtle">${playerHint(resolved.kind)}</div><div id="clip-editor"></div>`;
+    app.innerHTML = `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="vp-host" class="vp-host"></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>${esc(title)}</h2></div>${qualitySelect(capLadder(resolved.resolutions, profile), res)}</div><div id="player-message" class="notice subtle">${playerHint(resolved.kind)}</div><div id="clip-editor"></div>`;
     const message = document.getElementById('player-message');
     const posKey = `free.pos.${id}|${episode || ''}`;
     const subs = (r) => (r.subtitles || []).map((s) => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) }));
@@ -444,40 +453,47 @@ async function watchPage(id, episode) {
     let watchedMs = 0;
     let watchTick = Date.now();
     let watchGateOpen = false;
-    const switchQuality = async (r, fromAdaptive = false) => {
+    const switchQuality = async (r, fromAdaptive = false, reason = 'manual') => {
       if (switchingQuality) return;
       switchingQuality = true;
       message.textContent = 'Switching quality…';
       try {
         autoQuality = r === 'auto' || fromAdaptive;
-        resolved = await resolveStream(id, episode, r === 'auto' ? undefined : r);
+        const requested = r === 'auto' ? undefined : capQuality(Number(r), profile);
+        resolved = await resolveStream(id, episode, requested);
         candidateIndex = 0;
-        const requested = r === 'auto' ? 0 : Number(r) || 0;
         const maxSource = Math.max(...(resolved.resolutions || []).map(Number).filter((n) => n > 0), 0);
+        const nextQuality = requested || capQuality(resolved.selectedResolution, profile);
+        const previous = res;
         // When the source is larger, the gateway transcodes to the requested
         // target. When the source is smaller, keep the provider's real height
         // instead of displaying an impossible/upscaled quality.
-        res = requested && (!maxSource || requested <= maxSource) ? requested : (resolved.selectedResolution || requested);
-        vp.setSource(resolved.stream, { startAt: vp.video.currentTime, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res });
-        const sel = document.getElementById('quality'); if (sel) sel.value = autoQuality ? 'auto' : String(res);
+        res = nextQuality && (!maxSource || nextQuality <= maxSource) ? nextQuality : (resolved.selectedResolution || nextQuality);
+        vp.setSource(resolved.stream, { startAt: vp.video.currentTime, tracks: subs(resolved), qualities: capLadder(resolved.resolutions, profile), selectedQuality: res });
+        const sel = document.getElementById('quality'); if (sel) sel.value = autoQuality ? 'auto' : String(capQuality(res, profile));
+        if (previous && res && previous !== res) { lastAdapt = Date.now(); logLevelSwitched(previous, res, reason, abrState.slow, 0); }
         message.textContent = autoQuality ? 'Auto quality enabled.' : 'Quality switched.';
       } catch (error) { message.innerHTML = errBox(error); }
       finally { switchingQuality = false; }
     };
     vp = mountPlayer(document.getElementById('vp-host'), {
-      src: resolved.stream, title, kind: resolved.kind, allowShortMedia: false, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res,
+      src: resolved.stream, title, kind: resolved.kind, allowShortMedia: false, tracks: subs(resolved), qualities: capLadder(resolved.resolutions, profile), selectedQuality: res,
       startAt: Number(localStorage.getItem(posKey) || 0),
       onProgress: async (t, d) => {
         try { if (Number.isFinite(d) && d - t < 60) localStorage.removeItem(posKey); else localStorage.setItem(posKey, String(Math.floor(t))); } catch { /* ignore */ }
-        if (autoQuality && Date.now() - lastAdapt > 6000 && vp?.video?.buffered?.length) {
+        if (autoQuality && Date.now() - lastAdapt > ABR_CONFIG.abrSwitchInterval && vp?.video?.buffered?.length) {
           const v = vp.video; let end = 0;
           for (let i = 0; i < v.buffered.length; i += 1) if (v.buffered.start(i) <= t + 0.5) end = Math.max(end, v.buffered.end(i));
-          const ahead = end - t; const maxSource = Math.max(...(resolved.resolutions || []).map(Number).filter((n) => n > 0), 0); const ladder = [1080, 720, 540, 480, 360].filter((height) => !maxSource || height <= maxSource); const current = Number(res || resolved.selectedResolution || ladder[0] || 360); const pos = Math.max(0, ladder.indexOf(current));
-          const next = ahead < 5 && pos < ladder.length - 1 ? ladder[pos + 1] : ahead > 24 && pos > 0 ? ladder[pos - 1] : null;
-          if (next) { lastAdapt = Date.now(); await switchQuality(next, true); }
+          const ahead = Math.min(ABR_CONFIG.maxMaxBufferLength, Math.max(0, end - t));
+          abrState = updateEstimate({ ...abrState, lastAhead: ahead }, profile);
+          const maxSource = Math.max(...(resolved.resolutions || []).map(Number).filter((n) => n > 0), 0);
+          const ladder = capLadder([1080, 720, 540, 480, 360].filter((height) => !maxSource || height <= maxSource), profile);
+          const current = Number(res || resolved.selectedResolution || ladder[ladder.length - 1] || 360);
+          const next = chooseNext({ ahead, current, ladder, estimateBps: abrState.slow, profile, lastSwitchAt: lastAdapt });
+          if (next) await switchQuality(next.quality, true, next.reason);
         }
       },
-      onQuality: switchQuality,
+      onQuality: (quality) => switchQuality(capQuality(quality, profile), false, 'manual'),
       onClip: (video) => mountClipEditor(document.getElementById('clip-editor'), { video, title }),
       onRetry: async (automatic = false) => {
         const candidates = resolved.candidates || [];
@@ -507,7 +523,7 @@ async function watchPage(id, episode) {
       watchGateOpen = false;
       if (activePlayer === vp && document.visibilityState === 'visible') vp.video.play().catch(() => {});
     }, 1000);
-    document.getElementById('quality')?.addEventListener('change', (event) => switchQuality(event.target.value === 'auto' ? 'auto' : Number(event.target.value)));
+    document.getElementById('quality')?.addEventListener('change', (event) => switchQuality(event.target.value === 'auto' ? 'auto' : capQuality(Number(event.target.value), profile), false, 'manual'));
   } catch (error) { app.innerHTML = errBox(error) + `<a class="secondary back-button" href="${titleUrl(id)}">← Back to title</a>`; }
 }
 
