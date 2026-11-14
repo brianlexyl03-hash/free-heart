@@ -335,7 +335,11 @@ async fn fallback_movie_releases(
     season: usize,
     episode: usize,
 ) -> Result<(ProviderKind, String, Vec<Release>), ProviderError> {
-    for provider in [ProviderKind::FourKHdHub, ProviderKind::Dramachi] {
+    let mut providers = vec![ProviderKind::FourKHdHub, ProviderKind::Dramachi];
+    if addon_sources::enabled() {
+        providers.push(ProviderKind::Addons);
+    }
+    for provider in providers {
         let Ok(items) = service.search_typed(provider, &details.title, 1).await else {
             continue;
         };
@@ -359,7 +363,7 @@ async fn fallback_movie_releases(
         }
     }
     Err(ProviderError::Unavailable(
-        "MovieBox has no playable stream and no matching fallback source responded".to_string(),
+        "No configured provider returned a playable stream for this title".to_string(),
     ))
 }
 
@@ -694,7 +698,7 @@ async fn resolve(
         .map_err(|_| ApiError {
             status: StatusCode::BAD_GATEWAY,
             kind: "provider_error",
-            message: "MovieBox has no playable stream and no matching fallback source responded".to_string(),
+            message: "No configured provider returned a playable stream for this title".to_string(),
         })?,
         Err(error) => return Err(ApiError::provider(error)),
         Ok(releases) => (provider, subject_id.clone(), releases),

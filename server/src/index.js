@@ -165,9 +165,11 @@ function mint(url, headers = {}) {
 }
 function mintSmart(url, headers, kind, res) {
   const m = mint(url, headers);
-  let boxed = false;
-  try { boxed = /\.(mkv|avi|mov|ts|flv|wmv|mpd)$/i.test(new URL(url).pathname); } catch {}
-  return kind !== 'hls' && (boxed || Number(res) >= 1080) ? m.replace('/api/stream/', '/api/remux/') : m;
+  // Let the remux planner inspect every file. Compatible files are redirected
+  // straight back to the range-preserving stream; HEVC, 10-bit video, unusual
+  // containers, and incompatible audio get a browser-safe FFmpeg path.
+  // This prevents low-resolution HEVC files from bypassing compatibility checks.
+  return kind !== 'hls' ? m.replace('/api/stream/', '/api/remux/') : m;
 }
 app.get('/api/live/channels/:id/playback', async (req, reply) => {
   const id = z.string().regex(/^[a-z0-9-]{1,50}$/i).parse(req.params.id);

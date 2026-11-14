@@ -114,7 +114,10 @@ export function registerRemux(app, { tokens, TTL }) {
     if (!haveFfmpeg()) return reply.redirect(`/api/stream/${token}`, 302);
     const caps = parseCaps(req.headers.cookie);
     const info = await probe(e.url, e.headers || {});
-    const plan = choose(info, caps, process.env.ALLOW_TRANSCODE === '1');
+    // Keep playback working when a provider returns HEVC/10-bit video. Hosts
+    // with tight CPU budgets can explicitly opt out with ALLOW_TRANSCODE=0.
+    const allowTranscode = process.env.ALLOW_TRANSCODE !== '0';
+    const plan = choose(info, caps, allowTranscode);
     req.log.info({ mode: plan.mode, why: plan.why, container: info?.format, video: info?.video, vprofile: info?.vprofile, pix: info?.pix, hdr: info?.transfer, audio: info?.audio, caps: [...caps].join('.') }, 'playback plan');
     if (plan.mode === 'direct') return reply.redirect(`/api/stream/${token}`, 302);
     if (plan.mode === 'unplayable') return reply.code(415).send({ error: 'unsupported_video', message: `This version (${plan.why}). Choose 1080p or lower.` });

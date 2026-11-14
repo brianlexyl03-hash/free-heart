@@ -19,13 +19,13 @@ Set this environment variable on your local process or hosting provider:
 STREAM_ADDON_MANIFESTS=https://your-authorized-addon.example/manifest.json;https://another-authorized-addon.example/manifest.json
 ```
 
-Use only sources you are allowed to access and redistribute. Manifest URLs must use HTTPS and a public DNS hostname. Up to eight entries are accepted; separate them with semicolons or newlines. On startup Free Heart fetches each manifest with an eight-second timeout, keeps only add-ons that advertise a `stream` resource, and writes the validated list to MovieBox-TUI's existing add-on configuration. The built-in Cinemeta metadata/catalog add-on is retained.
+Use only sources you are allowed to access and redistribute. Manifest URLs must use HTTPS and a public DNS hostname. Up to twenty entries are accepted; separate them with semicolons or newlines. On startup Free Heart fetches each manifest with an eight-second timeout, keeps only add-ons that advertise a `stream` resource, and writes the validated list to MovieBox-TUI's existing add-on configuration. The built-in Cinemeta metadata/catalog add-on is retained. When the primary provider has no playable release, matching titles are also checked against enabled add-ons, 4KHDHub, and Dramachi.
 
 To change sources, edit `STREAM_ADDON_MANIFESTS` and restart/redeploy the service. On Render, go to the service's **Environment** settings, change the variable, then save and deploy. If no configured manifest can be loaded, the startup routine leaves the previous on-disk add-on configuration unchanged and logs that no configured stream add-ons were loaded.
 
 ### Important compatibility note
 
-A valid manifest does not guarantee that its streams can play in a browser. Free Heart's web proxy currently supports direct HTTP(S) files and HLS URLs. Torrent-only results (`magnet:`/`infoHash`), DRM, protected streams requiring an unsupported player, and inaccessible/private-network sources are not playable through this web adapter. This update does not bypass paywalls, authentication, geo restrictions, DRM, or provider access controls.
+A valid manifest does not guarantee that its streams can play in a browser. Free Heart's web proxy currently supports direct HTTP(S) files and HLS URLs. File playback now passes through the compatibility planner: browser-compatible files remain direct/range-preserving, while HEVC/10-bit, incompatible audio, and unusual containers are remuxed or transcoded to browser-safe MP4 when FFmpeg is available. Torrent-only results (`magnet:`/`infoHash`), DRM, protected streams requiring an unsupported player, and inaccessible/private-network sources are not playable through this web adapter. This update does not bypass paywalls, authentication, geo restrictions, DRM, or provider access controls.
 
 The upstream BDIX CircleFTP and DhakaFlix providers use private `172.16.x.x` network addresses; they are intentionally not enabled for a public Render service because those addresses are not internet-facing sources.
 
