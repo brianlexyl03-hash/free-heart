@@ -63,14 +63,15 @@ function store(key, value) {
 
 export async function searchArchive(query, page = 1, fetcher = fetch) {
   const clean = String(query || '').trim().replace(/[\u0000-\u001f]/g, '').slice(0, 100);
-  if (!clean) return [];
+  const phrase = clean.replace(/[^a-z0-9\s'-]/gi, ' ').replace(/\s+/g, ' ').trim();
+  if (!phrase) return [];
   const safePage = Math.max(1, Math.min(50, Number(page) || 1));
   const key = `search:${clean.toLowerCase()}:${safePage}`;
   const hit = cached(key);
   if (hit) return hit;
 
   const params = new URLSearchParams();
-  params.set('q', `mediatype:movies AND title:("${clean.replace(/["\\]/g, ' ')}")`);
+  params.set('q', `mediatype:movies AND title:("${phrase}")`);
   for (const field of ['identifier', 'title', 'year', 'description']) params.append('fl[]', field);
   params.set('rows', '20');
   params.set('page', String(safePage));
@@ -114,7 +115,7 @@ export function selectArchiveVideoFiles(files) {
   if (!Array.isArray(files)) return [];
   return files
     .filter((file) => {
-      if (!file || typeof file.name !== 'string' || file.private === 'true' || file.private === true) return false;
+      if (!file || typeof file.name !== 'string' || ['true', '1'].includes(String(file.private).toLowerCase())) return false;
       if (file.source && file.source !== 'original') return false;
       if (file.format && /metadata|text|thumbnail|image|torrent|archive bit torrent/i.test(String(file.format))) return false;
       return VIDEO_EXTENSIONS.has(extension(file.name)) && !file.name.includes('../');
