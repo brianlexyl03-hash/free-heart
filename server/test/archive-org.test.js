@@ -34,7 +34,7 @@ test('searches Archive.org and maps result documents', async () => {
 
 test('removes Lucene operators from user search text', async () => {
   const fetcher = async (url) => {
-    assert.equal(new URL(url).searchParams.get('q'), 'mediatype:movies AND title:(\"film test\")');
+    assert.equal(new URL(url).searchParams.get('q'), 'mediatype:movies AND title:(\"film OR mediatype audio\")');
     return { ok: true, json: async () => ({ response: { docs: [] } }) };
   };
   await searchArchive('film) OR mediatype:audio:*', 1, fetcher);
