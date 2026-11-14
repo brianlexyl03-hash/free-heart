@@ -29,11 +29,24 @@ impl App {
             .ok()
             .and_then(|value| crate::tui::state::PlayerKind::parse(&value))
             .or_else(|| {
-                self.state
+                let configured = self
+                    .state
                     .default_player
                     .as_deref()
                     .filter(|p| !p.eq_ignore_ascii_case("auto"))
-                    .and_then(crate::tui::state::PlayerKind::parse)
+                    .and_then(crate::tui::state::PlayerKind::parse);
+                if crate::player::has_graphical_display()
+                    && configured == Some(crate::tui::state::PlayerKind::AndroidIntent)
+                    && self
+                        .state
+                        .available_players
+                        .iter()
+                        .any(|&p| p != crate::tui::state::PlayerKind::AndroidIntent)
+                {
+                    None
+                } else {
+                    configured
+                }
             });
 
         if let Some(chosen) = preferred {
@@ -481,7 +494,7 @@ impl App {
                 (link.clone(), local_subtitle.clone())
             };
 
-            let log_dir = std::env::temp_dir().join("moviebox-tui/subs");
+            let log_dir = std::env::temp_dir().join("moviebox-tui").join("subs");
             let _ = std::fs::create_dir_all(&log_dir);
             let log_stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1545,6 +1558,89 @@ mod tests {
     }
 
     static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    #[tokio::test]
+    async fn test_graphical_session_overrides_stale_android_default_player() {
+        let _guard = ENV_LOCK.lock().await;
+        let orig_display = std::env::var("DISPLAY").ok();
+        let orig_player = std::env::var(crate::player::ENV_MOVIEBOX_PLAYER).ok();
+        unsafe {
+            std::env::set_var("DISPLAY", ":0.0");
+            std::env::remove_var(crate::player::ENV_MOVIEBOX_PLAYER);
+        }
+        let mut app = crate::tui::app::App::new();
+        app.state.available_players = vec![
+            crate::tui::state::PlayerKind::Mpv,
+            crate::tui::state::PlayerKind::Vlc,
+            crate::tui::state::PlayerKind::AndroidIntent,
+        ];
+        app.state.default_player = Some("android".to_string());
+        let source = crate::providers::models::PlaybackSource {
+            provider: crate::providers::models::ProviderKind::MovieBox,
+            url: "https://example.com/index.mpd".to_string(),
+            headers: vec![],
+            subtitle: None,
+            source_label: "1080p".to_string(),
+            max_height: None,
+        };
+        assert_eq!(
+            app.resolve_playback_player(&source),
+            super::PlaybackResolution::Available(crate::tui::state::PlayerKind::Mpv)
+        );
+        unsafe {
+            if let Some(val) = orig_display {
+                std::env::set_var("DISPLAY", val);
+            } else {
+                std::env::remove_var("DISPLAY");
+            }
+            if let Some(val) = orig_player {
+                std::env::set_var(crate::player::ENV_MOVIEBOX_PLAYER, val);
+            } else {
+                std::env::remove_var(crate::player::ENV_MOVIEBOX_PLAYER);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_graphical_session_respects_explicit_moviebox_player_env() {
+        let _guard = ENV_LOCK.lock().await;
+        let orig_display = std::env::var("DISPLAY").ok();
+        let orig_player = std::env::var(crate::player::ENV_MOVIEBOX_PLAYER).ok();
+        unsafe {
+            std::env::set_var("DISPLAY", ":0.0");
+            std::env::set_var(crate::player::ENV_MOVIEBOX_PLAYER, "android");
+        }
+        let mut app = crate::tui::app::App::new();
+        app.state.available_players = vec![
+            crate::tui::state::PlayerKind::Mpv,
+            crate::tui::state::PlayerKind::Vlc,
+            crate::tui::state::PlayerKind::AndroidIntent,
+        ];
+        app.state.default_player = Some("mpv".to_string());
+        let source = crate::providers::models::PlaybackSource {
+            provider: crate::providers::models::ProviderKind::MovieBox,
+            url: "https://example.com/index.mpd".to_string(),
+            headers: vec![],
+            subtitle: None,
+            source_label: "1080p".to_string(),
+            max_height: None,
+        };
+        assert_eq!(
+            app.resolve_playback_player(&source),
+            super::PlaybackResolution::Available(crate::tui::state::PlayerKind::AndroidIntent)
+        );
+        unsafe {
+            if let Some(val) = orig_display {
+                std::env::set_var("DISPLAY", val);
+            } else {
+                std::env::remove_var("DISPLAY");
+            }
+            if let Some(val) = orig_player {
+                std::env::set_var(crate::player::ENV_MOVIEBOX_PLAYER, val);
+            } else {
+                std::env::remove_var(crate::player::ENV_MOVIEBOX_PLAYER);
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_player_crashed_termux_actionable_notification() {
