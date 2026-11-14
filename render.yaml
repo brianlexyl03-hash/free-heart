@@ -16,3 +16,12 @@ services:
         value: info
       - key: UPSTREAM_COMMIT
         value: 751fd0ec49e114d0ae849bf1dc52fec869d58e7d
+
+      - key: SITEGUARD_API_URL
+        sync: false
+      - key: SITEGUARD_API_KEY
+        sync: false
+      - key: SITEGUARD_TELEMETRY_KEY
+        sync: false
+      - key: SITEGUARD_SITE_ID
+        value: free-heart

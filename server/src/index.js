@@ -146,6 +146,16 @@ const UPSTREAM_REPO = 'mesamirh/MovieBox-TUI';
 const UPSTREAM_COMMIT = process.env.UPSTREAM_COMMIT || '';
 const SOCIAL_WHATSAPP_URL = process.env.SOCIAL_WHATSAPP_URL || '';
 const PUBLIC_SITE_URL = String(process.env.PUBLIC_SITE_URL || '').replace(/\/$/, '');
+const SITEGUARD_API_URL = String(process.env.SITEGUARD_API_URL || '').replace(/\/$/, '');
+const SITEGUARD_API_KEY = String(process.env.SITEGUARD_API_KEY || '');
+const SITEGUARD_TELEMETRY_KEY = String(process.env.SITEGUARD_TELEMETRY_KEY || '');
+const SITEGUARD_SITE_ID = String(process.env.SITEGUARD_SITE_ID || 'free-heart');
+let siteGuardRequestCount = 0;
+app.addHook('onRequest', async (req) => {
+  if (SITEGUARD_API_URL && SITEGUARD_API_KEY && SITEGUARD_TELEMETRY_KEY
+      && !req.url.startsWith('/siteguard-api/')
+      && !req.url.startsWith('/api/health')) siteGuardRequestCount += 1;
+});
 const AI_BASE_URL = process.env.AI_BASE_URL || '';
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
@@ -554,6 +564,45 @@ app.get('/api/last-error', async () => ({ errors: lastErrors }));
 function htmlEscape(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+app.all('/siteguard-api/*', async (req, reply) => {
+  if (!ADMIN_PASSWORD || req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
+    return reply.code(401).send({ error: 'unauthorized', message: 'Free Heart owner password required' });
+  }
+  if (!SITEGUARD_API_URL || !SITEGUARD_API_KEY) {
+    return reply.code(503).send({ error: 'siteguard_not_configured', message: 'SiteGuard service is not connected yet. Configure SITEGUARD_API_URL and SITEGUARD_API_KEY on the Free Heart server.' });
+  }
+  let target;
+  try {
+    const suffix = req.raw.url.replace(/^\/siteguard-api/, '') || '/';
+    target = new URL(suffix, SITEGUARD_API_URL);
+    if (target.origin !== new URL(SITEGUARD_API_URL).origin) throw new Error('invalid target');
+  } catch {
+    return reply.code(400).send({ error: 'bad_siteguard_path', message: 'Invalid SiteGuard API path.' });
+  }
+  const headers = { 'x-api-key': SITEGUARD_API_KEY, accept: String(req.headers.accept || 'application/json') };
+  if (req.headers['content-type']) headers['content-type'] = String(req.headers['content-type']);
+  let upstream;
+  try {
+    upstream = await fetch(target, {
+      method: req.method,
+      headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : (req.body === undefined ? undefined : JSON.stringify(req.body)),
+      signal: AbortSignal.timeout(20000),
+      redirect: 'manual'
+    });
+  } catch {
+    return reply.code(502).send({ error: 'siteguard_unreachable', message: 'The SiteGuard service could not be reached.' });
+  }
+  for (const name of ['content-type', 'cache-control', 'retry-after']) {
+    const value = upstream.headers.get(name);
+    if (value) reply.header(name, value);
+  }
+  reply.code(upstream.status);
+  const payload = Buffer.from(await upstream.arrayBuffer());
+  return reply.send(payload);
+});
+
 async function seoIndex({ title, description, pathName = '/', body } = {}) {
   let html = await readFile(path.resolve(here, '../../web/index.html'), 'utf8');
   if (PUBLIC_SITE_URL) html = html.replaceAll('__PUBLIC_SITE_URL__', PUBLIC_SITE_URL);
@@ -597,6 +646,30 @@ const port = Number(process.env.PORT || 3000);
 startAutomaticPush();
 
 await app.listen({ port, host: process.env.HOST || '0.0.0.0' });
+
+if (SITEGUARD_API_URL && SITEGUARD_API_KEY && SITEGUARD_TELEMETRY_KEY) {
+  setInterval(async () => {
+    const requests = siteGuardRequestCount;
+    siteGuardRequestCount = 0;
+    if (!requests) return;
+    try {
+      const response = await fetch(`${SITEGUARD_API_URL}/v1/telemetry`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': SITEGUARD_API_KEY,
+          'x-site-telemetry-key': SITEGUARD_TELEMETRY_KEY
+        },
+        body: JSON.stringify({ site_id: SITEGUARD_SITE_ID, requests, window_seconds: 10 }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!response.ok) app.log.warn({ status: response.status }, 'SiteGuard telemetry was rejected');
+    } catch {
+      app.log.warn('SiteGuard telemetry delivery failed');
+    }
+  }, 10000).unref();
+  app.log.info({ site_id: SITEGUARD_SITE_ID }, 'SiteGuard traffic telemetry enabled');
+}
 
 
 // Render free tier sleeps after ~15 min idle (cold start = 502). Ping ourselves to stay awake.
