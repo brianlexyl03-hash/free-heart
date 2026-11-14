@@ -64,14 +64,14 @@ export function registerPushRoutes(fastify) {
   });
 }
 
-export async function sendToAll({ title, body, url, image, tag }) {
+export async function sendToAll({ title, body, url, image, tag, movieId, movieTitle }) {
   if (!PUBLIC_KEY || !PRIVATE_KEY) return { ok: false, disabled: true, sent: 0, failed: 0, removed: 0 };
   const items = read();
   let sent = 0, removed = 0, failed = 0;
   for (const item of items) {
     if (!item.enabled) continue;
     try {
-      await webpush.sendNotification(item.subscription, JSON.stringify({ title, body, url, image, tag }));
+      await webpush.sendNotification(item.subscription, JSON.stringify({ title, body, url, image, tag, movieId, movieTitle, kind: movieId ? 'movie' : 'general' }));
       item.lastSentAt = Date.now();
       sent++;
     } catch (e) {
@@ -90,13 +90,13 @@ export function hasSubscription(endpoint) {
   return read().some((item) => item.endpoint === endpoint && item.enabled);
 }
 
-export async function sendToEndpoint(endpoint, { title, body, url, image, tag }) {
+export async function sendToEndpoint(endpoint, { title, body, url, image, tag, movieId, movieTitle }) {
   if (!PUBLIC_KEY || !PRIVATE_KEY) return { ok: false, disabled: true };
   const items = read();
   const item = items.find((entry) => entry.endpoint === endpoint && entry.enabled);
   if (!item) return { ok: false, gone: true };
   try {
-    await webpush.sendNotification(item.subscription, JSON.stringify({ title, body, url, image, tag }));
+    await webpush.sendNotification(item.subscription, JSON.stringify({ title, body, url, image, tag, movieId, movieTitle, kind: movieId ? 'movie' : 'general' }));
     item.lastSentAt = Date.now();
     write(items);
     return { ok: true };

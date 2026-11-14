@@ -1,14 +1,6 @@
 import { core } from './core.js';
 import { sendToAll } from './push-notifications.js';
 
-const MESSAGES = [
-  ['You might like this 🎬', 'A fresh pick is waiting for you.'],
-  ['Something worth watching 🍿', 'We found a title you may enjoy.'],
-  ['This one is getting attention 🔥', 'Take a look at this pick.'],
-  ['Your next watch 👀', 'Here is something worth checking out.'],
-  ['A fresh pick for you ✨', 'Open free❤️‍🔥 and check it out.']
-];
-
 const used = new Set();
 let running = false;
 
@@ -91,15 +83,14 @@ async function sendRecommendation() {
 
     used.add(String(movie.id));
 
-    const [title, fallback] =
-      MESSAGES[Math.floor(Math.random() * MESSAGES.length)];
-
     const result = await sendToAll({
-      title,
-      body: movie.tagline || `${movie.title} is waiting for you 🍿`,
+      title: `🎬 ${movie.title}`,
+      body: movie.tagline || `New on free❤️‍🔥 · Tap to see ${movie.title}.`,
       url: movieUrl(movie),
       image: movieImage(movie),
-      tag: `free-heart-recommendation-${movie.id}`
+      tag: `free-heart-movie-${movie.id}`,
+      movieId: String(movie.id),
+      movieTitle: String(movie.title),
     });
 
     console.log('[auto-push] Recommendation sent', {

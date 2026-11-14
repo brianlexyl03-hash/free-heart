@@ -1,5 +1,5 @@
-const V = 'free-shell-v10';
-const SHELL = ['/', '/app.js', '/player.js', '/clipper.js', '/ai-connectors.js', '/postiz.js', '/maturity.js', '/styles.css', '/live.js', '/live.css', '/live-config.js', '/manifest.webmanifest', '/icon.svg'];
+const V = 'free-shell-v11';
+const SHELL = ['/', '/app.js', '/abr.js', '/player.js', '/clipper.js', '/ai-connectors.js', '/postiz.js', '/maturity.js', '/styles.css', '/live.js', '/live.css', '/live-config.js', '/manifest.webmanifest', '/icon.svg'];
 const DB_NAME = 'free-downloads-v1';
 const STORE = 'tasks';
 const MAX_ACTIVE = 3;
@@ -255,7 +255,18 @@ self.addEventListener('message', (event) => {
 self.addEventListener('push', (e) => {
   let data = {};
   try { data = e.data?.json() || {}; } catch { data = { body: e.data?.text() || 'A new pick is waiting.' }; }
-  e.waitUntil(self.registration.showNotification(data.title || 'A new pick for you', { body: data.body || 'Open free❤️‍🔥 to see what is new.', icon: '/icon-192.png', badge: '/icon-192.png', tag: data.tag || 'free-recommendation', data: { url: data.url || '/#/' } }));
+  const image = /^https?:\/\//i.test(String(data.image || '')) ? String(data.image) : '';
+  const title = String(data.title || (data.movieTitle ? `🎬 ${data.movieTitle}` : 'free❤️‍🔥'));
+  const body = String(data.body || (data.movieTitle ? `New on free❤️‍🔥 · Tap to see ${data.movieTitle}.` : 'Open free❤️‍🔥 to see what is new.'));
+  e.waitUntil(self.registration.showNotification(title, {
+    body,
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    image: image || undefined,
+    tag: data.tag || (data.movieId ? `free-heart-movie-${data.movieId}` : 'free-recommendation'),
+    renotify: false,
+    data: { url: data.url || '/#/', movieId: data.movieId || null, movieTitle: data.movieTitle || null, image: image || null },
+  }));
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();

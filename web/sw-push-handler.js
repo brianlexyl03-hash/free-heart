@@ -2,16 +2,17 @@
 self.addEventListener('push', event => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (_) {}
-  const title = data.title || 'You might like this 🎬';
+  const image = /^https?:\/\//i.test(String(data.image || '')) ? String(data.image) : '';
+  const title = data.title || (data.movieTitle ? `🎬 ${data.movieTitle}` : 'free❤️‍🔥');
   const options = {
-    body: data.body || 'Something new is waiting for you.',
-    icon: data.image || '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-    image: data.image,
-    tag: data.tag || 'free-heart-recommendation',
-    renotify: true,
+    body: data.body || (data.movieTitle ? `New on free❤️‍🔥 · Tap to see ${data.movieTitle}.` : 'Open free❤️‍🔥 to see what is new.'),
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    image: image || undefined,
+    tag: data.tag || (data.movieId ? `free-heart-movie-${data.movieId}` : 'free-heart-recommendation'),
+    renotify: false,
     vibrate: [120, 60, 120],
-    data: { url: data.url || '/#/' },
+    data: { url: data.url || '/#/', movieId: data.movieId || null, movieTitle: data.movieTitle || null },
     actions: [{ action: 'open', title: 'Watch' }]
   };
   event.waitUntil(self.registration.showNotification(title, options));
