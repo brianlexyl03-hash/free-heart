@@ -1,0 +1,52 @@
+name: Verify Free Heart
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "update/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust core tests and release build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90.0"
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --manifest-path core/Cargo.toml --all -- --check
+      - name: Run Rust tests
+        run: cargo test --manifest-path core/Cargo.toml
+      - name: Build release core
+        run: cargo build --release --manifest-path core/Cargo.toml
+
+  server:
+    name: Node server syntax checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Install production dependencies
+        run: npm ci --prefix server
+      - name: Check server source
+        run: npm --prefix server run check
+
+  docker:
+    name: Production Docker image build
+    runs-on: ubuntu-latest
+    needs: [rust, server]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build --tag free-heart:verify .

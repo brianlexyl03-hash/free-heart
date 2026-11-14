@@ -631,18 +631,20 @@ impl App {
                                 }
                                 Ok(Err(error)) => {
                                     log::error!("4KHDHub download resolve failed: {error}");
+                                    sender.send(Action::PlayerExited).ok();
                                     sender
-                                        .send(Action::SetStatus(format!(
-                                            "Error: 4KHDHub: {}",
+                                        .send(Action::DownloadFailed(format!(
+                                            "4KHDHub: {}",
                                             error.user_message()
                                         )))
                                         .ok();
                                 }
                                 Err(_) => {
                                     log::error!("4KHDHub download resolve timed out");
+                                    sender.send(Action::PlayerExited).ok();
                                     sender
-                                        .send(Action::SetStatus(
-                                            "Error: 4KHDHub: Timed out.".to_string(),
+                                        .send(Action::DownloadFailed(
+                                            "4KHDHub: Timed out.".to_string(),
                                         ))
                                         .ok();
                                 }
@@ -792,6 +794,7 @@ impl App {
 
                     self.state.selected_resources.clear();
                     self.state.is_fetching_streams = true;
+                    self.state.is_waiting_for_download_stream = true;
 
                     self.action_sender
                         .send(Action::FetchEpisodeStreams {
@@ -801,8 +804,6 @@ impl App {
                             force_refresh: false,
                         })
                         .ok();
-
-                    self.action_sender.send(Action::DownloadStream(None)).ok();
                 } else if self.state.download_queue_total > 0 {
                     self.state.notify(
                         NotificationKind::Success,
@@ -1505,5 +1506,38 @@ mod tests {
             .join(format!("{base_name}.en.srt"));
         assert_eq!(series_file, expected_series_file);
         assert_eq!(series_sub, expected_series_sub);
+    }
+    #[tokio::test]
+    async fn test_process_download_queue_sets_waiting_flag_without_immediate_download() {
+        let mut app = App::new();
+        app.state.active_screen = Screen::Details;
+        app.state.active_subject_id = Some("test_subject".to_string());
+        app.state.download_queue.push_back((2, 1));
+        app.state.download_queue_total = 1;
+
+        app.handle_download(Action::ProcessDownloadQueue).await;
+
+        assert!(app.state.is_waiting_for_download_stream);
+        assert!(app.state.is_fetching_streams);
+
+        let mut fetched = false;
+        let mut downloaded = false;
+        while let Ok(action) = app.action_receiver.try_recv() {
+            match action {
+                Action::FetchEpisodeStreams {
+                    season, episode, ..
+                } => {
+                    assert_eq!(season, 2);
+                    assert_eq!(episode, 1);
+                    fetched = true;
+                }
+                Action::DownloadStream(_) => {
+                    downloaded = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(fetched);
+        assert!(!downloaded);
     }
 }

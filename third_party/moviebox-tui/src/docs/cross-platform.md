@@ -18,11 +18,11 @@ MovieBox-TUI runs on **macOS**, **Linux**, **Windows**, and **Android (Termux)**
 - **Path Compatibility**: Supports Windows drive letters (`C:\...`), backslashes (`\`), forward slashes (`/`), and UNC paths.
 
 ### Android (Termux)
-- **Media Players**: Uses Android intent dispatchers (`termux-open` / `am start`) to stream directly to external video players (VLC for Android, Just Player, MX Player, MPV Android).
+- **Media Players**: Uses Android intent dispatchers (`termux-open` / `am start`) to stream directly to external video players (VLC for Android, Just Player, MX Player, MPV Android) in headless CLI environments.
+- **Graphical Desktops (Termux:X11, uDroid, PRoot)**: When an active `$DISPLAY` or `$WAYLAND_DISPLAY` is present, native desktop players (`mpv`, `VLC`) take priority over Android intent dispatchers.
 - **Prerequisites**: Run `pkg install -y termux-tools` in Termux.
 - **Subtitles**: Subtitles are saved to shared storage (`~/storage/downloads/moviebox_subs`) or served over the local `StreamRelay` loopback HTTP proxy when Termux shared storage is not mounted.
 - **DNS**: Built-in DNS resolver queries public resolvers (Cloudflare, Google, Quad9) without requiring root or Android JNI.
-
 ## Terminal Compatibility
 
 MovieBox-TUI automatically adapts to your terminal emulator:

@@ -62,11 +62,14 @@ Render provides `PORT`. The gateway binds to `0.0.0.0`; the Rust sidecar is inte
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional Web Push delivery |
 | `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY` | Optional server-managed caption provider |
 | `ADMIN_PASSWORD` | Protects owner controls |
-| `AD_URL`, `AD_DURATION_SECONDS` | Optional owner-managed ad configuration |
 | `SOCIAL_WHATSAPP_URL` | Optional contact link |
 | `UPSTREAM_COMMIT` | Records the pinned upstream provider revision |
 
 Keep secrets in your deployment environment. Do not commit real API keys, passwords, or private credentials.
+
+## Advertising and playback
+
+Free Heart has no owner-published global video-ad feature. The stream gateway rejects known advertising redirect hosts and HTML landing-page responses rather than presenting them as playable media. Provider-side server-inserted ads embedded inside a valid media stream cannot be reliably removed by the app without altering the provider's stream or violating its access rules.
 
 ## Responsible use and current limitations
 

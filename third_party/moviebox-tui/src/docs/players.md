@@ -14,7 +14,7 @@ Players are detected in priority order and cached across runs:
   - Searches `%LOCALAPPDATA%`, `Program Files`, WinGet packages, Scoop shims, Chocolatey, and Windows Registry `App Paths`.
 - **Android / Termux**: `Android Intent` (headless CLI) or `MPV` → `VLC` → `Android Intent` (graphical X11/Wayland desktop)
   - In headless terminal environments without an active display server, dispatches directly to external Android media apps via `termux-open` or `am start`.
-  - In graphical environments with an active display server (`$DISPLAY` or `$WAYLAND_DISPLAY`, such as Xfce in udroid/PRoot or Termux:X11), native desktop players (`MPV`/`VLC`) are prioritized so playback opens in a desktop window.
+  - In graphical environments with an active display server (`$DISPLAY` or `$WAYLAND_DISPLAY`, such as Xfce in udroid/PRoot or Termux:X11), native desktop players (`MPV`/`VLC`) take priority over Android intents. Unconfigured sessions resolve players dynamically, and desktop displays bypass legacy saved Android defaults unless overridden by `MOVIEBOX_PLAYER`.
 
 You can set a default player via `/settings` (Media Player), or override it with the `MOVIEBOX_PLAYER` environment variable.
 
@@ -32,7 +32,7 @@ mpv --autofit=WxH --geometry=50%:50% --hwdec=auto-safe --stream-buffer-size=4M -
 
 ### VLC
 ```bash
-vlc --width=W --height=H --play-and-exit --no-one-instance --network-caching=3000 --file-caching=3000 --http-reconnect --adaptive-logic=predictive [OPTIONS] <url>
+vlc --width=W --height=H --no-one-instance --network-caching=3000 --file-caching=3000 --http-reconnect --adaptive-logic=predictive [OPTIONS] <url>
 ```
 - **Headers**: Mapped to `--http-user-agent` and `--http-referrer`.
 - **DASH & CloudFront Streams**: Cookie-authenticated and DASH `.mpd` streams route through the local `StreamRelay` proxy sidecar (`127.0.0.1:<port>`) with HTTP/1.1 persistent connections (`Keep-Alive`), parallel `95 KB` `Range`-chunked `.m4s` segment fetching, lookahead segment prefetching (`N+1..N+3`), and resolution representation capping.

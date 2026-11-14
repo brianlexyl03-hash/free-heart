@@ -15,4 +15,4 @@ services:
       - key: LOG_LEVEL
         value: info
       - key: UPSTREAM_COMMIT
-        value: 751fd0ec49e114d0ae849bf1dc52fec869d58e7d
+        value: 5fd687e46e165723755e6550aa4c107367d72545

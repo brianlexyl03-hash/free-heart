@@ -51,11 +51,21 @@ impl App {
         self.state.active_screen = Screen::Home;
 
         self.state.available_players = crate::tui::player::detect();
-        if (self.state.default_player.is_none()
-            || self.state.default_player.as_deref() == Some("auto"))
-            && let Some(first) = self.state.available_players.first()
+        if crate::player::has_graphical_display()
+            && std::env::var(crate::player::ENV_MOVIEBOX_PLAYER).is_err()
+            && self.state.default_player.as_deref().is_some_and(|p| {
+                p.eq_ignore_ascii_case("android")
+                    || p.eq_ignore_ascii_case("androidintent")
+                    || p.eq_ignore_ascii_case("android-intent")
+            })
+            && self
+                .state
+                .available_players
+                .iter()
+                .any(|&p| p != crate::tui::state::PlayerKind::AndroidIntent)
         {
-            self.state.default_player = Some(first.config_key().to_string());
+            self.state.default_player = None;
+            self.persist_config();
         }
         let preferred = std::env::var(crate::player::ENV_MOVIEBOX_PLAYER)
             .ok()
@@ -64,6 +74,7 @@ impl App {
                 self.state
                     .default_player
                     .as_deref()
+                    .filter(|p| !p.eq_ignore_ascii_case("auto"))
                     .and_then(crate::tui::state::PlayerKind::parse)
             });
         if let Some(preferred) = preferred

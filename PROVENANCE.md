@@ -1,5 +1,6 @@
 # Provenance
 
 Upstream: https://github.com/mesamirh/MovieBox-Tui
-Commit: 751fd0ec49e114d0ae849bf1dc52fec869d58e7d
-Recorded: 2026-10-04
+Release: v0.1.29
+Commit: 5fd687e46e165723755e6550aa4c107367d72545
+Recorded: 2026-11-14

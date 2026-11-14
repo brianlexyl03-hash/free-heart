@@ -277,7 +277,9 @@ where
                 )
                 .await
                 {
-                    Err(DownloadError::InvalidRange(_)) => {
+                    Err(DownloadError::InvalidRange(_))
+                    | Err(DownloadError::Http(_))
+                    | Err(DownloadError::Network(_)) => {
                         let _ = tokio::fs::remove_file(&partial).await;
                         metadata = ResumeMetadata::default();
                         write_metadata(&metadata_path, &metadata).await?;
@@ -693,7 +695,7 @@ async fn download_segment(
                     let bytes = chunk.len().min(remaining as usize);
                     file.write_all(&chunk[..bytes]).await?;
                     written += bytes as u64;
-                    segment_written.store(written, Ordering::Relaxed);
+                    segment_written.store(written - file.buffer().len() as u64, Ordering::Relaxed);
                     unbatched_bytes += bytes as u64;
                     if unbatched_bytes >= 512 * 1024
                         || last_progress_send.elapsed() >= Duration::from_millis(120)
@@ -1039,6 +1041,111 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 
+    #[tokio::test]
+    async fn test_segmented_pause_records_only_bytes_on_disk() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let total_size: usize = 16 * 1024 * 1024;
+        let payload: Arc<Vec<u8>> = Arc::new((0..total_size).map(|i| (i % 251) as u8).collect());
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{port}/slow_movie.mp4");
+
+        let server_payload = Arc::clone(&payload);
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let data = Arc::clone(&server_payload);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let Ok(n) = socket.read(&mut buf).await else {
+                        return;
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let range = req.lines().find_map(|line| {
+                        line.strip_prefix("Range: bytes=")
+                            .or_else(|| line.strip_prefix("range: bytes="))
+                            .map(|v| v.trim().to_string())
+                    });
+                    let total = data.len();
+                    let Some(range) = range else {
+                        return;
+                    };
+                    let (s_str, e_str) = range.split_once('-').unwrap();
+                    let start: usize = s_str.parse().unwrap();
+                    let end: usize = if e_str.is_empty() {
+                        total - 1
+                    } else {
+                        e_str.parse().unwrap()
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\nContent-Range: bytes {start}-{end}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        end - start + 1
+                    );
+                    if socket.write_all(resp.as_bytes()).await.is_err() {
+                        return;
+                    }
+                    for chunk in data[start..=end].chunks(16 * 1024) {
+                        if socket.write_all(chunk).await.is_err() {
+                            return;
+                        }
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                });
+            }
+        });
+
+        let temp_dir = std::env::temp_dir().join(format!("mbx_seg_pause_{}", std::process::id()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let dest_file = temp_dir.join("movie.mp4");
+        let part_file = sidecar_path(&dest_file, "part");
+        let meta_file = sidecar_path(&dest_file, "part.json");
+        let client = crate::net::http_client_builder_base().build().unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::clone(&cancel);
+        let res = download(&client, &url, &dest_file, cancel, move |prog| {
+            if prog.downloaded >= 1024 * 1024 {
+                pause.store(true, Ordering::Relaxed);
+            }
+        })
+        .await;
+        assert!(matches!(res, Ok(DownloadOutcome::Paused { .. })));
+
+        let metadata = read_metadata(&meta_file).await;
+        let partial = tokio::fs::read(&part_file).await.unwrap();
+        let ranges = segment_ranges(total_size as u64, metadata.segments.unwrap());
+        for (&(start, _), &written) in ranges.iter().zip(&metadata.segment_progress) {
+            let (start, written) = (start as usize, written as usize);
+            assert_eq!(
+                partial[start..start + written],
+                payload[start..start + written],
+                "segment at {start} claims {written} bytes that are not on disk"
+            );
+        }
+
+        let res = download(
+            &client,
+            &url,
+            &dest_file,
+            Arc::new(AtomicBool::new(false)),
+            |_| {},
+        )
+        .await;
+        server.abort();
+        assert!(
+            matches!(res, Ok(DownloadOutcome::Completed { bytes }) if bytes == total_size as u64)
+        );
+        let saved = tokio::fs::read(&dest_file).await.unwrap();
+        assert!(saved == *payload, "resumed download must match the source");
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
     #[test]
     fn test_safe_file_stem_empty_fallback() {
         assert_eq!(safe_file_stem(""), DEFAULT_STREAM_NAME);
@@ -1206,6 +1313,67 @@ mod tests {
         let saved = tokio::fs::read(&dest_file).await.unwrap();
         assert_eq!(saved, b"test video binary chunk stream");
         assert!(progress_count > 0);
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_download_segmented_drops_fallback_to_sequential_download() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{port}/stream.mp4");
+
+        let server = tokio::spawn(async move {
+            let total_size = 5 * 1024 * 1024;
+            let mut request_num = 0;
+            while request_num < 10 {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                request_num += 1;
+                let mut buf = [0u8; 1024];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+
+                if req.contains("Range: bytes=0-0") {
+                    let resp = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-0/{total_size}\r\nContent-Length: 1\r\nAccept-Ranges: bytes\r\n\r\n0"
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                } else if req.contains("Range: bytes=") && request_num <= 4 {
+                    let resp = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                } else {
+                    let chunk = vec![b'X'; total_size];
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {total_size}\r\nAccept-Ranges: none\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                    let _ = socket.write_all(&chunk).await;
+                    break;
+                }
+            }
+        });
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("mbx_fallback_test_{}", std::process::id()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let dest_file = temp_dir.join("fallback_stream.mp4");
+
+        let client = reqwest::Client::new();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let res = download(&client, &url, &dest_file, cancel, |_| {}).await;
+        let _ = server.await;
+
+        assert!(matches!(res, Ok(DownloadOutcome::Completed { .. })));
+        assert!(dest_file.exists());
+        let meta = tokio::fs::metadata(&dest_file).await.unwrap();
+        assert_eq!(meta.len(), 5 * 1024 * 1024);
 
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }

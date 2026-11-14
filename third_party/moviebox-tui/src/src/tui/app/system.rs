@@ -310,7 +310,6 @@ impl App {
                             self.state.available_players.push(player);
                         }
                     }
-                    self.state.ensure_default_player();
                     self.state.show_settings_popup = true;
                     self.state.settings_category = crate::tui::state::SettingsCategory::General;
                     self.state.settings_selected_row = 0;
@@ -431,7 +430,6 @@ impl App {
                                 if !detected.is_empty() {
                                     self.state.available_players = detected;
                                 }
-                                self.state.ensure_default_player();
                             }
                             if !self.state.available_players.is_empty() {
                                 self.state.settings_player_picker = true;
