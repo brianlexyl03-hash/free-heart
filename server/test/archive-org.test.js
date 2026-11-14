@@ -25,10 +25,19 @@ test('selects direct video files and excludes private/derivative/torrent files',
 test('searches Archive.org and maps result documents', async () => {
   const fetcher = async (url) => {
     assert.match(String(url), /advancedsearch\.php/);
+    assert.equal(new URL(url).searchParams.get('q'), 'mediatype:movies AND title:(\"Big Buck Bunny\")');
     return { ok: true, json: async () => ({ response: { docs: [{ identifier: 'bbb', title: 'Big Buck Bunny', year: 2008 }] } }) };
   };
   const result = await searchArchive('Big Buck Bunny', 1, fetcher);
   assert.equal(result[0].id, 'archive:bbb');
+});
+
+test('removes Lucene operators from user search text', async () => {
+  const fetcher = async (url) => {
+    assert.equal(new URL(url).searchParams.get('q'), 'mediatype:movies AND title:(\"film test\")');
+    return { ok: true, json: async () => ({ response: { docs: [] } }) };
+  };
+  await searchArchive('film) OR mediatype:audio:*', 1, fetcher);
 });
 
 test('loads title metadata and resolves direct downloadable media', async () => {
