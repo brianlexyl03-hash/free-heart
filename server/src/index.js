@@ -371,7 +371,10 @@ app.post('/api/ai/caption', { config: { rateLimit: { max: 30, timeWindow: '1 min
 
 app.get('/api/title/:id', async (req) => {
   const id = Id.parse(req.params.id);
-  if (id.startsWith('archive:')) return getArchiveTitle(id.slice('archive:'.length));
+  if (id.startsWith('archive:')) {
+    try { return await getArchiveTitle(id.slice('archive:'.length)); }
+    catch { throw new CoreClientError(404, 'archive_item_unavailable', 'This Internet Archive item is unavailable.'); }
+  }
   return core.title(id);
 });
 
