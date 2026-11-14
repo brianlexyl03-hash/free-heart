@@ -1001,14 +1001,6 @@ impl AppState {
         }
     }
 
-    pub fn ensure_default_player(&mut self) {
-        if (self.default_player.is_none() || self.default_player.as_deref() == Some("auto"))
-            && let Some(first) = self.available_players.first()
-        {
-            self.default_player = Some(first.config_key().to_string());
-        }
-    }
-
     pub fn settings_player_choices(&self) -> Vec<&str> {
         let mut choices: Vec<&str> = Vec::with_capacity(self.available_players.len());
         for player in &self.available_players {
