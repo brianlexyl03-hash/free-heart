@@ -29,6 +29,8 @@ A valid manifest does not guarantee that its streams can play in a browser. Free
 
 The web player exposes Auto quality plus a 1080p/720p/540p/480p/360p ladder. A requested lower rung is generated in real time with FFmpeg when the source is larger, and Auto moves down or up using the current playback buffer. Downloads still require a range/content-type preflight before they start; a successful preflight is cached briefly so the same item is not checked repeatedly while the download sheet is reopened.
 
+Full-length movie and episode playback also rejects a candidate whose loaded media duration is 8–30 seconds, treating it as a likely provider interstitial and trying the next authorized candidate. Short-drama playback and saved local files explicitly allow short media, so legitimate short content is not blocked. Advertising redirects and HTML responses are rejected server-side; mid-roll advertising embedded inside an otherwise valid third-party stream is not removed or bypassed.
+
 The upstream BDIX CircleFTP and DhakaFlix providers use private `172.16.x.x` network addresses; they are intentionally not enabled for a public Render service because those addresses are not internet-facing sources.
 
 ## Apply from Termux

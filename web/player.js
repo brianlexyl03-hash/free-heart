@@ -107,6 +107,7 @@ export function mountPlayer(host, opts) {
   let locked = false;
   let rotLocked = false;
   let autoRetried = false;
+  let shortMediaRetried = false;
   let destroyed = false;
   let hideTimer = 0, hudTimer = 0, toastTimer = 0, unlockTimer = 0, infoTimer = 0, lastProgress = 0;
   let probeInfo = opts.info ? { ...opts.info } : null;
@@ -397,12 +398,12 @@ export function mountPlayer(host, opts) {
     }
     return msg;
   }
-  async function retry(auto) {
+  async function retry(auto, reason = '') {
     errBox.hidden = true; spinner.hidden = false;
     try {
       const next = opts.onRetry ? await opts.onRetry(auto) : null;
       if (next?.src) { setSource(next.src, { startAt: video.currentTime || startAt, tracks: next.tracks }); return; }
-      if (auto) { showError(await explain()); return; }
+      if (auto) { showError(reason === 'short_ad' ? 'This provider returned a short promotional clip instead of the requested video. All available sources were checked.' : await explain()); return; }
       video.load();
     } catch (e) { showError(e.message || 'Could not refresh the stream.'); }
   }
@@ -434,6 +435,14 @@ export function mountPlayer(host, opts) {
   video.addEventListener('loadedmetadata', () => {
     applyAspect();
     if (startAt > 5 && Number.isFinite(video.duration) && startAt < video.duration - 30) video.currentTime = startAt;
+    const shortInterstitial = !opts.allowShortMedia && Number.isFinite(video.duration) && video.duration >= 8 && video.duration <= 30;
+    if (shortInterstitial && !shortMediaRetried && opts.onRetry) {
+      shortMediaRetried = true;
+      video.pause();
+      showError('Checking another source…');
+      retry(true, 'short_ad');
+      return;
+    }
     startAt = 0; paintTime();
   });
   video.addEventListener('durationchange', paintTime);
@@ -460,7 +469,7 @@ export function mountPlayer(host, opts) {
     });
   }
   function setSource(next, o = {}) {
-    src = next; startAt = o.startAt || 0; autoRetried = false;
+    src = next; startAt = o.startAt || 0; autoRetried = false; shortMediaRetried = false;
     if (o.tracks) tracks = o.tracks;
     if (o.qualities) qualities = o.qualities;
     if ('selectedQuality' in o) qualitySel = o.selectedQuality;

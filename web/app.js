@@ -456,7 +456,7 @@ async function watchPage(id, episode) {
       } catch (error) { message.innerHTML = errBox(error); }
     };
     vp = mountPlayer(document.getElementById('vp-host'), {
-      src: resolved.stream, title, kind: resolved.kind, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res,
+      src: resolved.stream, title, kind: resolved.kind, allowShortMedia: false, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res,
       startAt: Number(localStorage.getItem(posKey) || 0),
       onProgress: async (t, d) => {
         try { if (Number.isFinite(d) && d - t < 60) localStorage.removeItem(posKey); else localStorage.setItem(posKey, String(Math.floor(t))); } catch { /* ignore */ }
@@ -724,6 +724,7 @@ async function playDownload(t) {
     const key = `free.pos.dl.${t.taskId}`;
     activePlayer = mountPlayer(host, {
       src: URL.createObjectURL(file.slice(0, file.size, /^video\//.test(t.type || '') ? t.type : 'video/mp4')), title: t.name, kind: 'local', probe: false,
+      allowShortMedia: true,
       info: { size: file.size, mime: t.type || 'video/mp4', ranges: true }, startAt: Number(localStorage.getItem(key) || 0),
       onProgress: (x, d) => { try { if (Number.isFinite(d) && d - x < 60) localStorage.removeItem(key); else localStorage.setItem(key, String(Math.floor(x))); } catch { /* ignore */ } },
       onClip: (video) => mountClipEditor(clipHost, { video, title: t.name }),
@@ -873,7 +874,7 @@ async function shortsPage() {
     const episode = episodes[episodeIndex] || null, episodeKey = episode?.key || undefined, title = activeTitle.title || 'Short drama', label = episode ? labelFor(episode, episodeIndex) : 'Episode 1';
     stage.innerHTML = '<div class="shorts-feed-title"><b>' + esc(title) + '</b><span>' + esc(label) + '</span></div><div class="shorts-player-host" id="shorts-player-host"></div><div class="shorts-player-loading" id="shorts-player-loading">Resolving episode…</div>';
     counter.textContent = (activeTitle.catalogueIndex + 1) + '/' + catalogue.length + ' · ' + (episodes.length ? (episodeIndex + 1) + '/' + episodes.length : 'Episode'); document.getElementById('shorts-prev').disabled = activeTitle.catalogueIndex === 0 && episodeIndex === 0; document.getElementById('shorts-next').disabled = activeTitle.catalogueIndex === catalogue.length - 1 && episodeIndex >= Math.max(0, episodes.length - 1);
-    try { const resolved = await resolveStream(activeTitle.id, episodeKey); if (run !== generation) return; document.getElementById('shorts-player-loading')?.remove(); activePlayer = mountPlayer(document.getElementById('shorts-player-host'), { src: resolved.stream, title: title + ' · ' + label, kind: resolved.kind, tracks: (resolved.subtitles || []).map(s => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) })), qualities: resolved.resolutions || [], selectedQuality: resolved.selectedResolution }); activePlayer.video.addEventListener('ended', nextEpisode, { once: true }); }
+    try { const resolved = await resolveStream(activeTitle.id, episodeKey); if (run !== generation) return; document.getElementById('shorts-player-loading')?.remove(); activePlayer = mountPlayer(document.getElementById('shorts-player-host'), { src: resolved.stream, title: title + ' · ' + label, kind: resolved.kind, allowShortMedia: true, tracks: (resolved.subtitles || []).map(s => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) })), qualities: resolved.resolutions || [], selectedQuality: resolved.selectedResolution }); activePlayer.video.addEventListener('ended', nextEpisode, { once: true }); }
     catch (error) { if (run !== generation) return; document.getElementById('shorts-player-loading')?.remove(); const host = document.getElementById('shorts-player-host'); if (host) host.innerHTML = '<div class="shorts-player-error"><strong>No playable stream was returned for this episode</strong><p>' + esc(error?.message || String(error)) + '</p><button id="shorts-retry">Retry episode</button></div>'; document.getElementById('shorts-retry')?.addEventListener('click', () => { const nextRun = ++generation; loadEpisode(nextRun); }); }
   }
   async function nextEpisode() { if (!activeTitle) return; if (episodeIndex + 1 < episodes.length) { episodeIndex++; await loadEpisode(++generation); return; } if (activeTitle.catalogueIndex + 1 < catalogue.length) { await playShort(activeTitle.catalogueIndex + 1); return; } counter.textContent = 'End of available catalogue'; }
