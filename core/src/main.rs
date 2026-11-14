@@ -139,6 +139,8 @@ struct ResolveResponse {
     candidates: Vec<ResolveCandidate>,
     subtitles: Vec<SubtitleResponse>,
     resolutions: Vec<u32>,
+    #[serde(rename = "expectedDurationSeconds")]
+    expected_duration_seconds: Option<u32>,
     #[serde(rename = "selectedResolution")]
     selected_resolution: u32,
 }
@@ -154,6 +156,32 @@ struct ResolveCandidate {
 struct HealthResponse {
     ok: bool,
     core: &'static str,
+}
+
+fn duration_seconds(value: Option<&str>) -> Option<u32> {
+    let raw = value?.trim().to_ascii_lowercase();
+    if raw.is_empty() { return None; }
+    if raw.contains(':') {
+        let parts: Vec<u32> = raw.split(':').filter_map(|part| part.trim().parse().ok()).collect();
+        return match parts.as_slice() {
+            [minutes, seconds] => Some(minutes.saturating_mul(60).saturating_add(*seconds)),
+            [hours, minutes, seconds] => Some(hours.saturating_mul(3600).saturating_add(minutes.saturating_mul(60)).saturating_add(*seconds)),
+            _ => None,
+        };
+    }
+    let mut total = 0u32;
+    let mut found = false;
+    for token in raw.split_whitespace() {
+        let (number, multiplier) = if let Some(number) = token.strip_suffix('h') { (number, 3600) }
+            else if let Some(number) = token.strip_suffix('m') { (number, 60) }
+            else if let Some(number) = token.strip_suffix('s') { (number, 1) }
+            else { continue };
+        if let Ok(number) = number.parse::<u32>() {
+            total = total.saturating_add(number.saturating_mul(multiplier));
+            found = true;
+        }
+    }
+    found.then_some(total)
 }
 
 fn item_response(item: CatalogItem) -> ItemResponse {
@@ -630,6 +658,7 @@ fn open_film_demo_resolve_response() -> Option<ResolveResponse> {
         candidates,
         subtitles: Vec::new(),
         resolutions: vec![1080],
+        expected_duration_seconds: None,
         selected_resolution: 1080,
     })
 }
@@ -783,6 +812,7 @@ async fn resolve(
         subtitles,
         selected_resolution: release.resolution_u64().min(u32::MAX as u64) as u32,
         resolutions,
+        expected_duration_seconds: duration_seconds(details.duration.as_deref()),
     }))
 }
 

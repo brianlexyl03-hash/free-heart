@@ -35,6 +35,8 @@ The Rust core now keeps every unique HTTP/HLS mirror from every playable release
 
 Downloads now call the gateway's media verifier before writing bytes to browser storage. When FFmpeg/FFprobe is available, the verifier requires a real video stream, rejects HTML/ad-only responses and 8–30 second interstitial candidates, and reports source height/codec metadata. The same token then passes through the in-house remux/transcode planner, which produces browser-safe MP4 and applies the requested lower resolution when the source is larger. If FFmpeg is unavailable, verification is explicitly marked unavailable rather than falsely claiming that a source was verified.
 
+MovieBox runtime validation now starts before the browser player: MovieBox-TUI's duration metadata (`30m`, `1h`, `HH:MM:SS`, and similar forms) is carried with the resolve response. A candidate must expose a real video stream and a runtime that is not an 8–30 second interstitial or materially shorter than the title runtime. Candidates that fail are removed from the resolver result and the next verified mirror is used; they are not merely hidden after playback starts.
+
 The upstream BDIX CircleFTP and DhakaFlix providers use private `172.16.x.x` network addresses; they are intentionally not enabled for a public Render service because those addresses are not internet-facing sources.
 
 ## Apply from Termux

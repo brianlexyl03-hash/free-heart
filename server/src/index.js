@@ -170,16 +170,26 @@ function mint(url, headers = {}, options = {}) {
   const t = crypto.randomBytes(18).toString('base64url');
   const h = {};
   for (const [k, v] of Object.entries(headers)) if (ALLOWED_HDRS.has(k.toLowerCase())) h[k] = v;
-  tokens.set(t, { url, headers: h, targetResolution: Number(options.targetResolution) || null, exp: Date.now() + TTL });
+  tokens.set(t, { url, headers: h, targetResolution: Number(options.targetResolution) || null, expectedDuration: Number(options.expectedDuration) || null, exp: Date.now() + TTL });
   return `/api/stream/${t}`;
 }
-function mintSmart(url, headers, kind, res, targetResolution) {
-  const m = mint(url, headers, { targetResolution });
+function mintSmart(url, headers, kind, res, targetResolution, expectedDuration) {
+  const m = mint(url, headers, { targetResolution, expectedDuration });
   // Let the remux planner inspect every file. Compatible files are redirected
   // straight back to the range-preserving stream; HEVC, 10-bit video, unusual
   // containers, and incompatible audio get a browser-safe FFmpeg path.
   // This prevents low-resolution HEVC files from bypassing compatibility checks.
   return kind !== 'hls' ? m.replace('/api/stream/', '/api/remux/') : m;
+}
+async function passesRuntimeCheck(candidate, expectedDuration) {
+  if (!haveFfmpeg()) return true;
+  const info = await probe(candidate.url, candidate.headers || {}, 5000);
+  // A probe timeout is unknown, not proof that a valid signed CDN URL is bad.
+  if (!info) return true;
+  if (!info.video || !Number.isFinite(info.duration) || info.duration <= 0) return false;
+  if (info.duration >= 8 && info.duration <= 30) return false;
+  if (expectedDuration && info.duration < Math.max(45, expectedDuration * 0.45)) return false;
+  return true;
 }
 app.get('/api/live/channels/:id/playback', async (req, reply) => {
   const id = z.string().regex(/^[a-z0-9-]{1,50}$/i).parse(req.params.id);
@@ -330,9 +340,15 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
     throw err;
   }
   req.log.info({ wanted: b.resolution, selected: r.selectedResolution, kind: r.kind, ext: (r.candidates || [{ url: r.url }]).map((c) => { try { return new URL(c.url).pathname.split('.').pop().slice(0, 8); } catch { return '?'; } }) }, 'resolve debug');
-  const candidates = (r.candidates || [{ url: r.url, kind: r.kind, headers: r.headers }]).map((candidate) => ({
+  const sourceCandidates = r.candidates || [{ url: r.url, kind: r.kind, headers: r.headers }];
+  const checkedCandidates = (await Promise.all(sourceCandidates.map(async (candidate) => ({
+    candidate,
+    valid: await passesRuntimeCheck(candidate, r.expectedDurationSeconds),
+  })))).filter((item) => item.valid).map((item) => item.candidate);
+  if (!checkedCandidates.length) throw new CoreClientError(502, 'no_verified_media', 'No MovieBox source passed video and runtime verification. The provider returned ad-only or incomplete media responses.');
+  const candidates = checkedCandidates.map((candidate) => ({
     kind: candidate.kind,
-    stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r.selectedResolution, b.resolution ?? null),
+    stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r.selectedResolution, b.resolution ?? null, r.expectedDurationSeconds ?? null),
   }));
   const withDownloads = candidates.map((candidate) => ({
     ...candidate,
@@ -361,14 +377,16 @@ app.post('/api/verify', { config: { rateLimit: { max: 180, timeWindow: '1 minute
   if (!haveFfmpeg()) return { verified: null, playable: true, reason: 'probe_unavailable' };
   const info = await probe(entry.url, entry.headers || {}, 7000);
   const shortInterstitial = !body.allowShortMedia && Number.isFinite(info?.duration) && info.duration >= 8 && info.duration <= 30;
-  const playable = Boolean(info?.video) && !shortInterstitial;
+  const runtimeMismatch = entry.expectedDuration && Number.isFinite(info?.duration)
+    && info.duration < Math.max(45, entry.expectedDuration * 0.45);
+  const playable = Boolean(info?.video) && Number.isFinite(info?.duration) && info.duration > 0 && !shortInterstitial && !runtimeMismatch;
   return {
     verified: playable,
     playable,
     duration: info?.duration || 0,
     height: info?.height || 0,
     codec: info?.video || '',
-    reason: !info ? 'media_probe_failed' : shortInterstitial ? 'short_interstitial' : playable ? 'ok' : 'no_video_stream',
+    reason: !info ? 'media_probe_failed' : shortInterstitial ? 'short_interstitial' : runtimeMismatch ? 'runtime_mismatch' : playable ? 'ok' : 'no_video_stream',
   };
 });
 
