@@ -21,3 +21,7 @@ services:
         sync: false
       - key: SITEGUARD_API_KEY
         sync: false
+      - key: SITEGUARD_TELEMETRY_KEY
+        sync: false
+      - key: SITEGUARD_SITE_ID
+        value: free-heart
