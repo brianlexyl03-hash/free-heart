@@ -155,16 +155,16 @@ function assertPublicHttp(u) {
   const h = x.hostname;
   if (h === 'localhost' || /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.|\[?::1|\[?f[cd])/i.test(h)) throw new CoreBadResponse();
 }
-function mint(url, headers = {}) {
+function mint(url, headers = {}, options = {}) {
   assertPublicHttp(url);
   const t = crypto.randomBytes(18).toString('base64url');
   const h = {};
   for (const [k, v] of Object.entries(headers)) if (ALLOWED_HDRS.has(k.toLowerCase())) h[k] = v;
-  tokens.set(t, { url, headers: h, exp: Date.now() + TTL });
+  tokens.set(t, { url, headers: h, targetResolution: Number(options.targetResolution) || null, exp: Date.now() + TTL });
   return `/api/stream/${t}`;
 }
-function mintSmart(url, headers, kind, res) {
-  const m = mint(url, headers);
+function mintSmart(url, headers, kind, res, targetResolution) {
+  const m = mint(url, headers, { targetResolution });
   // Let the remux planner inspect every file. Compatible files are redirected
   // straight back to the range-preserving stream; HEVC, 10-bit video, unusual
   // containers, and incompatible audio get a browser-safe FFmpeg path.
@@ -309,7 +309,7 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
   req.log.info({ wanted: b.resolution, selected: r.selectedResolution, kind: r.kind, ext: (r.candidates || [{ url: r.url }]).map((c) => { try { return new URL(c.url).pathname.split('.').pop().slice(0, 8); } catch { return '?'; } }) }, 'resolve debug');
   const candidates = (r.candidates || [{ url: r.url, kind: r.kind, headers: r.headers }]).map((candidate) => ({
     kind: candidate.kind,
-    stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r.selectedResolution),
+    stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r.selectedResolution, b.resolution ?? null),
   }));
   const withDownloads = candidates.map((candidate) => ({
     ...candidate,

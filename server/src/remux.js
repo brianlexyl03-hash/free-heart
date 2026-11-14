@@ -89,11 +89,18 @@ export function choose(info, caps, allowTranscode = false) {
   return allowTranscode ? { mode: 'transcode', audio: 'aac', why } : { mode: 'unplayable', why };
 }
 
+export function withTargetResolution(plan, info, targetResolution) {
+  const target = Number(targetResolution);
+  if (!Number.isFinite(target) || target <= 0 || !info?.height || info.height <= target) return plan;
+  return { ...plan, mode: 'transcode', targetHeight: Math.round(target), audio: 'aac', why: `requested ${Math.round(target)}p playback` };
+}
+
 export function remuxArgs(url, headers, plan) {
   const a = ['-hide_banner', '-loglevel', 'error', '-fflags', '+genpts', ...inputArgs(url, headers),
     '-map_metadata', '-1', '-map_chapters', '-1', '-map', '0:v:0', '-map', '0:a:0?', '-sn'];
   if (plan.mode === 'transcode') {
-    a.push('-vf', 'scale=-2:min(720\\,ih)', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-pix_fmt', 'yuv420p', '-g', '48', '-sc_threshold', '0');
+    const maxHeight = Math.max(144, Math.min(4320, Number(plan.targetHeight) || 720));
+    a.push('-vf', `scale=-2:min(${maxHeight}\\,ih)`, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-pix_fmt', 'yuv420p', '-g', '48', '-sc_threshold', '0');
   } else {
     a.push('-c:v', 'copy');
     if (plan.tagHevc) a.push('-tag:v', 'hvc1');
@@ -117,7 +124,7 @@ export function registerRemux(app, { tokens, TTL }) {
     // Keep playback working when a provider returns HEVC/10-bit video. Hosts
     // with tight CPU budgets can explicitly opt out with ALLOW_TRANSCODE=0.
     const allowTranscode = process.env.ALLOW_TRANSCODE !== '0';
-    const plan = choose(info, caps, allowTranscode);
+    const plan = withTargetResolution(choose(info, caps, allowTranscode), info, e.targetResolution);
     req.log.info({ mode: plan.mode, why: plan.why, container: info?.format, video: info?.video, vprofile: info?.vprofile, pix: info?.pix, hdr: info?.transfer, audio: info?.audio, caps: [...caps].join('.') }, 'playback plan');
     if (plan.mode === 'direct') return reply.redirect(`/api/stream/${token}`, 302);
     if (plan.mode === 'unplayable') return reply.code(415).send({ error: 'unsupported_video', message: `This version (${plan.why}). Choose 1080p or lower.` });

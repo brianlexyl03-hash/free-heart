@@ -156,10 +156,15 @@ const resolveStream = (id, episode, resolution) => api('/api/resolve', {
 });
 
 function qualitySelect(resolutions = [], selected) {
-  if (!resolutions.length) return '';
-  const labels = resolutions.map((r) => `<option value="${r}" ${Number(r) === Number(selected) ? 'selected' : ''}>${r >= 2160 ? '4K' : `${r}p`}</option>`).join('');
+  const ladder = [...new Set([1080, 720, 540, 480, 360, ...resolutions.map(Number)].filter((r) => r >= 144 && r <= 4320))].sort((a, b) => b - a);
+  const labels = `<option value="auto" selected>Auto (network)</option>${ladder.map((r) => `<option value="${r}" ${Number(r) === Number(selected) ? 'selected' : ''}>${r >= 2160 ? '4K' : `${r}p`}</option>`).join('')}`;
   return `<label class="quality">Quality<select id="quality">${labels}</select></label>`;
 }
+
+const verifiedKey = (id, episode, quality) => `free.verified.${id}|${episode || ''}|${quality || 'auto'}`;
+const verifiedFresh = (id, episode, quality) => {
+  try { const v = JSON.parse(localStorage.getItem(verifiedKey(id, episode, quality)) || 'null'); return v && Date.now() - v.at < 10 * 60 * 1000 ? v : null; } catch { return null; }
+};
 
 function subtitleCode(label) {
   const value = String(label || '').toLowerCase();
@@ -333,6 +338,13 @@ function openDownloadSheet({ id, data, seasons, season, current, out }) {
     optBtns().forEach((b) => { b.disabled = true; });
     const quality = Number(document.getElementById('dl-quality').value) || undefined;
     let ok = false; let msg = '';
+    const cached = verifiedFresh(id, isSeries ? cur.key : undefined, quality);
+    if (cached) {
+      ok = true; msg = `Verified${cached.selectedResolution ? ` · ${cached.selectedResolution}p` : ''}${cached.size ? ` · ${fmt(cached.size)}` : ''}`;
+      availEl.dataset.s = 'ok'; availEl.textContent = `✓ ${msg} · checked recently`;
+      optBtns().forEach((b) => { b.disabled = false; });
+      return;
+    }
     try {
       const r = await api('/api/resolve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, episode: isSeries ? cur.key : undefined, resolution: quality }) });
       if (!r.download && !(r.candidates || []).some((candidate) => candidate.download)) throw new Error('This source has no downloadable file route.');
@@ -352,6 +364,7 @@ function openDownloadSheet({ id, data, seasons, season, current, out }) {
       if (/^(text\/|application\/json)/.test(ct)) throw new Error('The source returned a web page instead of a video.');
       if (size != null && size < 65536) throw new Error('The source returned an empty or tiny file.');
       ok = true; msg = `Available${r.selectedResolution ? ` · ${r.selectedResolution}p` : ''}${size ? ` · ${fmt(size)}` : ''}${isSeries ? ` (checked ${shortEp(cur.label)})` : ''}`;
+      localStorage.setItem(verifiedKey(id, isSeries ? cur.key : undefined, quality), JSON.stringify({ at: Date.now(), selectedResolution: r.selectedResolution || quality || null, size: size || 0 }));
     } catch (e) { msg = e.message || 'Not available right now.'; }
     if (seq !== checkSeq || !document.body.contains(sheet)) return;
     availEl.dataset.s = ok ? 'ok' : 'bad';
@@ -391,20 +404,23 @@ async function watchPage(id, episode) {
     const epLabel = episode ? ((meta?.episodes || []).find((e) => e.key === episode)?.label || episode) : '';
     const title = meta ? `${meta.title}${epLabel ? ` · ${epLabel}` : ''}` : (epLabel || 'Now playing');
     let res = resolved.selectedResolution;
+    let autoQuality = true;
+    let lastAdapt = 0;
     app.innerHTML = `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="vp-host" class="vp-host"></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>${esc(title)}</h2></div>${qualitySelect(resolved.resolutions, res)}</div><div id="player-message" class="notice subtle">${playerHint(resolved.kind)}</div><div id="clip-editor"></div>`;
     const message = document.getElementById('player-message');
     const posKey = `free.pos.${id}|${episode || ''}`;
     const subs = (r) => (r.subtitles || []).map((s) => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) }));
     let vp;
-    const switchQuality = async (r) => {
+    const switchQuality = async (r, fromAdaptive = false) => {
       message.textContent = 'Switching quality…';
       try {
-        resolved = await resolveStream(id, episode, r);
+        autoQuality = r === 'auto' || fromAdaptive;
+        resolved = await resolveStream(id, episode, r === 'auto' ? undefined : r);
         candidateIndex = 0;
         res = resolved.selectedResolution || r;
         vp.setSource(resolved.stream, { startAt: vp.video.currentTime, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res });
-        const sel = document.getElementById('quality'); if (sel) sel.value = String(res);
-        message.textContent = 'Quality switched.';
+        const sel = document.getElementById('quality'); if (sel) sel.value = autoQuality ? 'auto' : String(res);
+        message.textContent = autoQuality ? 'Auto quality enabled.' : 'Quality switched.';
       } catch (error) { message.innerHTML = errBox(error); }
     };
     vp = mountPlayer(document.getElementById('vp-host'), {
@@ -412,6 +428,13 @@ async function watchPage(id, episode) {
       startAt: Number(localStorage.getItem(posKey) || 0),
       onProgress: async (t, d) => {
         try { if (Number.isFinite(d) && d - t < 60) localStorage.removeItem(posKey); else localStorage.setItem(posKey, String(Math.floor(t))); } catch { /* ignore */ }
+        if (autoQuality && Date.now() - lastAdapt > 6000 && vp?.video?.buffered?.length) {
+          const v = vp.video; let end = 0;
+          for (let i = 0; i < v.buffered.length; i += 1) if (v.buffered.start(i) <= t + 0.5) end = Math.max(end, v.buffered.end(i));
+          const ahead = end - t; const ladder = [1080, 720, 540, 480, 360]; const current = Number(resolved.selectedResolution || 1080); const pos = Math.max(0, ladder.indexOf(current));
+          const next = ahead < 5 && pos < ladder.length - 1 ? ladder[pos + 1] : ahead > 24 && pos > 0 ? ladder[pos - 1] : null;
+          if (next) { lastAdapt = Date.now(); await switchQuality(next, true); }
+        }
       },
       onQuality: switchQuality,
       onClip: (video) => mountClipEditor(document.getElementById('clip-editor'), { video, title }),
@@ -429,7 +452,7 @@ async function watchPage(id, episode) {
       },
     });
     activePlayer = vp;
-    document.getElementById('quality')?.addEventListener('change', (event) => switchQuality(Number(event.target.value)));
+    document.getElementById('quality')?.addEventListener('change', (event) => switchQuality(event.target.value === 'auto' ? 'auto' : Number(event.target.value)));
   } catch (error) { app.innerHTML = errBox(error) + `<a class="secondary back-button" href="${titleUrl(id)}">← Back to title</a>`; }
 }
 

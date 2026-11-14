@@ -27,6 +27,8 @@ To change sources, edit `STREAM_ADDON_MANIFESTS` and restart/redeploy the servic
 
 A valid manifest does not guarantee that its streams can play in a browser. Free Heart's web proxy currently supports direct HTTP(S) files and HLS URLs. File playback now passes through the compatibility planner: browser-compatible files remain direct/range-preserving, while HEVC/10-bit, incompatible audio, and unusual containers are remuxed or transcoded to browser-safe MP4 when FFmpeg is available. Torrent-only results (`magnet:`/`infoHash`), DRM, protected streams requiring an unsupported player, and inaccessible/private-network sources are not playable through this web adapter. This update does not bypass paywalls, authentication, geo restrictions, DRM, or provider access controls.
 
+The web player exposes Auto quality plus a 1080p/720p/540p/480p/360p ladder. A requested lower rung is generated in real time with FFmpeg when the source is larger, and Auto moves down or up using the current playback buffer. Downloads still require a range/content-type preflight before they start; a successful preflight is cached briefly so the same item is not checked repeatedly while the download sheet is reopened.
+
 The upstream BDIX CircleFTP and DhakaFlix providers use private `172.16.x.x` network addresses; they are intentionally not enabled for a public Render service because those addresses are not internet-facing sources.
 
 ## Apply from Termux
