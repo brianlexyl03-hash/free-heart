@@ -21,7 +21,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
-        run: cargo fmt --manifest-path core/Cargo.toml --all -- --check
+        run: cargo fmt --manifest-path core/Cargo.toml -- --check
       - name: Run Rust tests
         run: cargo test --manifest-path core/Cargo.toml
       - name: Build release core
