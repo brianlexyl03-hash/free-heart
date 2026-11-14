@@ -68,6 +68,16 @@ async function resolveStream(task, signal) {
   throw last || new Error('Could not prepare this download.');
 }
 
+async function verifyCandidate(stream, signal) {
+  const response = await fetch('/api/verify', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+    body: JSON.stringify({ stream, allowShortMedia: false }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) return false;
+  return body.verified !== false;
+}
+
 async function runDownload(task) {
   const ac = new AbortController();
   running.set(task.taskId, ac);
@@ -100,6 +110,11 @@ async function runDownload(task) {
       let response = null;
       const candidate = candidates[candidateIndex] || { stream: resolved.stream, download: resolved.download };
       const downloadUrl = candidate.download || resolved.download || candidate.stream;
+      const verified = await verifyCandidate(downloadUrl, ac.signal).catch(() => false);
+      if (!verified) {
+        if (candidateIndex + 1 < candidates.length) { candidateIndex += 1; continue; }
+        throw new Error('Every available source failed media verification or returned an ad-only stream. Nothing was downloaded.');
+      }
       try { response = await fetch(downloadUrl, { headers: existing > 0 ? { range: `bytes=${existing}-` } : {}, signal: ac.signal, credentials: 'same-origin' }); }
       catch (e) { if (ac.signal.aborted) throw e; }
       if (!response || response.status >= 500 || response.status === 429) {

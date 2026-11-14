@@ -35,7 +35,7 @@ export function probe(url, headers = {}, timeoutMs = 15000) {
     const a = ['-v', 'error', '-user_agent', inp[1]];
     const h = inp.indexOf('-headers');
     if (h >= 0) a.push('-headers', inp[h + 1]);
-    a.push('-show_entries', 'format=format_name:stream=codec_type,codec_name,profile,pix_fmt,color_transfer,height', '-of', 'json', url);
+    a.push('-show_entries', 'format=format_name,duration:stream=codec_type,codec_name,profile,pix_fmt,color_transfer,height', '-of', 'json', url);
     const p = spawn('ffprobe', a, { stdio: ['ignore', 'pipe', 'ignore'] });
     let out = '';
     const t = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, timeoutMs);
@@ -47,7 +47,7 @@ export function probe(url, headers = {}, timeoutMs = 15000) {
         const j = JSON.parse(out);
         const v = (j.streams || []).find((s) => s.codec_type === 'video');
         const au = (j.streams || []).find((s) => s.codec_type === 'audio');
-        resolve({ format: String(j.format?.format_name || ''), video: v?.codec_name || '', vprofile: v?.profile || '', pix: v?.pix_fmt || '', transfer: v?.color_transfer || '', height: v?.height || 0, audio: au?.codec_name || '' });
+        resolve({ format: String(j.format?.format_name || ''), duration: Number(j.format?.duration) || 0, video: v?.codec_name || '', vprofile: v?.profile || '', pix: v?.pix_fmt || '', transfer: v?.color_transfer || '', height: v?.height || 0, audio: au?.codec_name || '' });
       } catch { resolve(null); }
     });
   });

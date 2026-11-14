@@ -33,6 +33,8 @@ Full-length movie and episode playback also rejects a candidate whose loaded med
 
 The Rust core now keeps every unique HTTP/HLS mirror from every playable release returned for the selected provider, ordered by the requested quality. The gateway receives that complete candidate chain and can fail over across CDN mirrors instead of repeatedly retrying only the first release. Search already queries MovieBox, 4KHDHub, Dramachi, configured stream add-ons, and the optional WeFeed catalogue concurrently; up to twenty operator-authorized add-on manifests can be configured.
 
+Downloads now call the gateway's media verifier before writing bytes to browser storage. When FFmpeg/FFprobe is available, the verifier requires a real video stream, rejects HTML/ad-only responses and 8–30 second interstitial candidates, and reports source height/codec metadata. The same token then passes through the in-house remux/transcode planner, which produces browser-safe MP4 and applies the requested lower resolution when the source is larger. If FFmpeg is unavailable, verification is explicitly marked unavailable rather than falsely claiming that a source was verified.
+
 The upstream BDIX CircleFTP and DhakaFlix providers use private `172.16.x.x` network addresses; they are intentionally not enabled for a public Render service because those addresses are not internet-facing sources.
 
 ## Apply from Termux

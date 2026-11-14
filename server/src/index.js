@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import { registerRemux } from './remux.js';
+import { registerRemux, haveFfmpeg, probe } from './remux.js';
 import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
 import crypto from 'node:crypto';
@@ -346,6 +346,29 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
     subtitles: (r.subtitles || []).map((s) => ({ lang: s.lang, label: s.label, src: mint(s.url, r.headers) })),
     resolutions: r.resolutions || [],
     selectedResolution: r.selectedResolution,
+  };
+});
+
+app.post('/api/verify', { config: { rateLimit: { max: 180, timeWindow: '1 minute' } } }, async (req, reply) => {
+  const body = z.object({
+    stream: z.string().regex(/^\/api\/(?:stream|remux|play)\/[\w-]{20,40}$/),
+    allowShortMedia: z.boolean().default(false),
+  }).parse(req.body || {});
+  const token = body.stream.split('/').pop();
+  const entry = tokens.get(token);
+  if (!entry || entry.exp < Date.now()) return reply.code(404).send({ verified: false, message: 'The stream link expired.' });
+  entry.exp = Date.now() + TTL;
+  if (!haveFfmpeg()) return { verified: null, playable: true, reason: 'probe_unavailable' };
+  const info = await probe(entry.url, entry.headers || {}, 7000);
+  const shortInterstitial = !body.allowShortMedia && Number.isFinite(info?.duration) && info.duration >= 8 && info.duration <= 30;
+  const playable = Boolean(info?.video) && !shortInterstitial;
+  return {
+    verified: playable,
+    playable,
+    duration: info?.duration || 0,
+    height: info?.height || 0,
+    codec: info?.video || '',
+    reason: !info ? 'media_probe_failed' : shortInterstitial ? 'short_interstitial' : playable ? 'ok' : 'no_video_stream',
   };
 });
 
