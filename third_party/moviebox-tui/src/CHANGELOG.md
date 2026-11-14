@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+## [0.1.29] - 2026-11-05
+
+### Fixed
+- **Providers & Stream Resolution**:
+  - Restored MovieBox TV series streaming by generating and attaching the official `X-Client-Build` APK certificate stamp with signed requests.
+  - Preserved multi colon and namespaced media identifiers (such as Kitsu anime IDs) in Stremio addon stream aggregation.
+  - Replaced hard assertions on HTTP client builders with safe fallbacks in MovieBox, CircleFTP, and DhakaFlix clients.
+- **Networking & DNS**:
+  - Added runtime fallback to public DNS (Cloudflare, Google, Quad9) in `FallbackResolver` when primary system DNS lookup fails or is blocked by an ISP.
+- **Media Playback & Sidecar Proxy**:
+  - Handled poisoned watchdog activity locks gracefully in the stream proxy sidecar loop to prevent unwrap crashes.
+  - Standardized cross-platform temporary subtitle cleanup path joins to eliminate forward-slash path issues on Windows.
+- **Test Infrastructure**:
+  - Synchronized environment dependent player tests with `ENV_MUTEX` and probed Android intent openers dynamically to eliminate parallel test race conditions.
+
+### Changed
+- **Dependencies & Build Infrastructure**:
+  - Upgraded `unicode-width` to 0.2.3, `log` to 0.4.35, and `zip` to 9.2.1 (#234).
+
+## [0.1.28] - 2026-10-29
+
+### Fixed
+- **Providers & Stream Resolution**:
+  - Extracted signed CDN MP4 streams from MovieBox subject detector links (`/subject-api/get`), restoring movie streaming and multi-resolution playback after upstream restricted play-info with deprecation clips.
+  - Reported explicit error causes when MovieBox serves placeholder clips instead of generic "no streams available", and surfaced upstream HTTP failure statuses directly to the user.
+- **Download Engine & Batch Queue**:
+  - Recorded only flushed bytes to `.part.json` segment progress during downloads, preventing aborted or paused workers from leaving zero-byte gaps and file corruption on resume.
+
+### Changed
+- **Dependencies & Build Infrastructure**:
+  - Upgraded `tokio` to 1.54.1, `scraper` to 0.29.0, `lru` to 0.19.0, `zip` to 9.1.0, `sha2` to 0.11.1, `open` to 5.4.5, `libc` to 0.2.191, and `serde_json` to 1.0.154.
+
+## [0.1.27] - 2026-10-23
+
+### Fixed
+- **Media Playback & Subtitle Engine**:
+  - Removed `--play-and-exit` from VLC player invocations so the player stays active across adaptive and HLS chunk transitions.
+  - Reset legacy Android player defaults in graphical X11 and Wayland sessions so native Linux players take precedence over external Android intent dialogs.
+  - Prioritized native Linux media player paths over foreign container fallbacks on Linux systems and preserved dynamic auto-player resolution for unconfigured sessions.
+- **Providers & Stream Resolution**:
+  - Recovered playable signed MP4 streams via `/resource-position/v2` when MovieBox returns deprecation notice clips, querying exact seasons and episodes and reporting accurate file sizes.
+  - Stripped the DASH `Referer` header on direct MP4 streams to prevent CDN HTTP 429 throttling.
+  - Bumped the MovieBox stream cache schema to `v2_` to discard stale cached deprecation notices.
+  - Filtered out unhosted MovieBox `/hls/` signed cookie targets in manifest resolution, which stops unplayable H.264 stream entries from failing with HTTP 404 during downloads or media playback.
+- **Download Engine & Batch Queue**:
+  - Fixed season batch downloads by arming `is_waiting_for_download_stream` during queue steps, eliminating immediate empty-list download calls that aborted multi-episode queues.
+  - Reset the download resolution state lock on 4KHDHub resolver timeouts and errors so failed mirror resolutions do not block subsequent download attempts.
+  - Added sequential single-connection fallback to the internal HTTP downloader when multi-worker segmented range requests receive HTTP 403, 429, or network disconnects.
 ### Added
 - **In-App Updater Lifecycle**:
   - Tracked target executable path before staging updates and resolved deleted inode suffixes (` (deleted)`) on Linux to restart the new binary automatically after popup self-update.
@@ -9,6 +57,7 @@
 
 ### Changed
 - **Dependencies & Build Infrastructure**:
+  - Upgraded `zip` to 9.0.5, `rustls` to 0.23.46, `quinn-proto` to 0.11.19, `rustls-webpki` to 0.103.16, and `webpki-roots` to 1.0.10, resolving RustSec security advisories.
   - Upgraded `sha2` to 0.11 with chunked streaming hash updates, preserving non-blocking checksum verification for release archives.
   - Upgraded `dirs` to 7.0, `futures` to 0.3.34, and `zip` to 8.6 across platform config paths, async tasks, and updater archive extraction.
 
