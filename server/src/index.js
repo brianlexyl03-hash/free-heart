@@ -134,7 +134,6 @@ const TTL = 6 * 60 * 60 * 1000; // long enough for full movies; refreshed on eve
 setInterval(() => { const n = Date.now(); for (const [k, v] of tokens) if (v.exp < n) tokens.delete(k); }, 60000).unref();
 // Provider signing headers stay in the server-side token record; none are returned to the browser.
 const ALLOWED_HDRS = new Set(['referer', 'user-agent', 'cookie', 'origin']);
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 let liveChannelSources = [];
 try {
   const parsed = JSON.parse(process.env.LIVE_CHANNEL_SOURCES_JSON || '[]');
@@ -149,11 +148,6 @@ const PUBLIC_SITE_URL = String(process.env.PUBLIC_SITE_URL || '').replace(/\/$/,
 const AI_BASE_URL = process.env.AI_BASE_URL || '';
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
-let adConfig = {
-  enabled: false,
-  url: '',
-  durationSeconds: 0,
-};
 
 function assertPublicHttp(u) {
   const x = new URL(u);
@@ -330,28 +324,6 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
   };
 });
 
-app.get('/api/ad-config', async () => ({ enabled: false, url: '', durationSeconds: 0 }));
-
-app.post('/api/admin/check', async (req, reply) => {
-  if (!ADMIN_PASSWORD || req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
-    return reply.code(401).send({ error: 'unauthorized', message: 'Owner password required' });
-  }
-  return { ok: true };
-});
-
-app.put('/api/admin/ad', async (req, reply) => {
-  if (!ADMIN_PASSWORD || req.headers['x-admin-password'] !== ADMIN_PASSWORD) {
-    return reply.code(401).send({ error: 'unauthorized', message: 'Admin password required' });
-  }
-  z.object({
-    enabled: z.boolean().optional(),
-    url: z.string().url().optional(),
-    durationSeconds: z.coerce.number().int().min(0).max(9).optional(),
-  }).parse(req.body || {});
-  adConfig = { enabled: false, url: '', durationSeconds: 0 };
-  return { enabled: false, durationSeconds: 0 };
-});
-
 function upstreamMessage(status) {
   if (status === 401) return 'The source needs a sign-in for this file (HTTP 401). Try another quality or title.';
   if (status === 402) return 'The source is asking for payment or a subscription for this file (HTTP 402). Try another quality or title.';
@@ -359,6 +331,14 @@ function upstreamMessage(status) {
   if (status === 404) return 'The source no longer has this file (HTTP 404). Try another quality or title.';
   if (status === 410) return 'This link expired (HTTP 410). Go back and press Play again.';
   return `The source rejected this request (HTTP ${status}). Try another quality or try again later.`;
+}
+function isAdRedirectTarget(value) {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return /(^|\\.)((doubleclick|googlesyndication|googleadservices|adservice|adserver|popads|propellerads|exoclick|trafficjunky)\\.)/.test(host);
+  } catch {
+    return true;
+  }
 }
 function isHlsResponse(response, sourceUrl) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
@@ -437,6 +417,16 @@ app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1
     req.log.warn({ status: lastStatus, err: lastErr }, 'stream upstream failed');
     return reply.code(502).send({ error: 'upstream_failed', message: `The source could not be reached (${lastStatus ? `HTTP ${lastStatus}` : lastErr}). Try another quality or try again.` });
   }
+  const finalUrl = r.url || e.url;
+  const finalType = String(r.headers.get('content-type') || '').toLowerCase();
+  if (isAdRedirectTarget(finalUrl) || finalType.includes('text/html') || finalType.includes('application/xhtml+xml')) {
+    try { await r.body?.cancel(); } catch {}
+    return reply.code(502).send({
+      error: 'non_media_redirect',
+      message: 'The selected source redirected to an advertising or web page instead of a media stream. Choose another source.',
+    });
+  }
+
   if (!r.ok && r.status !== 416) {
     try { await r.body?.cancel(); } catch {}
     return reply.code(r.status).send({ error: 'upstream_rejected', message: upstreamMessage(r.status) });
