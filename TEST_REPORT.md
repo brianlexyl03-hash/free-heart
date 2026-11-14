@@ -27,3 +27,11 @@ Executed on 2026-10-04.
 - Docker image build: NOT RUN; Docker/Podman is not installed in this sandbox.
 
 Not executed: automated browser UI testing, OPFS download in a real browser, native HLS playback testing, and the optional name-conflict search for `free❤️‍🔥`.
+
+
+## Upstream engine refresh — 2026-11-14
+
+- Vendored MovieBox-TUI source updated from upstream commit `751fd0ec49e114d0ae849bf1dc52fec869d58e7d` to release `v0.1.29` (`5fd687e46e165723755e6550aa4c107367d72545`).
+- Updated all files changed by the upstream release diff, including MovieBox signed-stream resolution, TV-series request signing, networking/DNS fallback, download resume handling, player handling, addon aggregation, and associated tests/docs.
+- Updated `PROVENANCE.md`, Render's `UPSTREAM_COMMIT` pin, and the vendor script so an existing checkout is fetched and checked out at the pinned release rather than silently remaining stale.
+- Validation status: source and configuration changes were committed to the update branch. Rust build/tests and live provider/CDN playback were **not run** in this environment (Cargo is unavailable and outbound GitHub access from the build container is blocked). The previous 2026-10-04 test results above are historical and do not validate this refresh.
