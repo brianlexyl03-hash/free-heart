@@ -1,4 +1,4 @@
-const V = 'free-shell-v11';
+const V = 'free-shell-v12';
 const SHELL = ['/', '/app.js', '/abr.js', '/player.js', '/clipper.js', '/ai-connectors.js', '/postiz.js', '/maturity.js', '/styles.css', '/live.js', '/live.css', '/live-config.js', '/manifest.webmanifest', '/icon.svg'];
 const DB_NAME = 'free-downloads-v1';
 const STORE = 'tasks';
@@ -260,9 +260,8 @@ self.addEventListener('push', (e) => {
   const body = String(data.body || (data.movieTitle ? `New on free❤️‍🔥 · Tap to see ${data.movieTitle}.` : 'Open free❤️‍🔥 to see what is new.'));
   e.waitUntil(self.registration.showNotification(title, {
     body,
-    icon: '/icon-192.png',
+    icon: image || '/icon-192.png',
     badge: '/icon-192.png',
-    image: image || undefined,
     tag: data.tag || (data.movieId ? `free-heart-movie-${data.movieId}` : 'free-recommendation'),
     renotify: false,
     data: { url: data.url || '/#/', movieId: data.movieId || null, movieTitle: data.movieTitle || null, image: image || null },

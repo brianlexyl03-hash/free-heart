@@ -6,9 +6,8 @@ self.addEventListener('push', event => {
   const title = data.title || (data.movieTitle ? `🎬 ${data.movieTitle}` : 'free❤️‍🔥');
   const options = {
     body: data.body || (data.movieTitle ? `New on free❤️‍🔥 · Tap to see ${data.movieTitle}.` : 'Open free❤️‍🔥 to see what is new.'),
-    icon: '/icon-192.png',
+    icon: image || '/icon-192.png',
     badge: '/icon-192.png',
-    image: image || undefined,
     tag: data.tag || (data.movieId ? `free-heart-movie-${data.movieId}` : 'free-heart-recommendation'),
     renotify: false,
     vibrate: [120, 60, 120],
