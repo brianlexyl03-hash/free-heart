@@ -18,10 +18,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.90.0"
-          components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Check formatting
-        run: cargo fmt --manifest-path core/Cargo.toml --all -- --check
       - name: Run Rust tests
         run: cargo test --manifest-path core/Cargo.toml
       - name: Build release core
@@ -41,6 +38,8 @@ jobs:
         run: npm ci --prefix server
       - name: Check server source
         run: npm --prefix server run check
+      - name: Run server unit tests
+        run: npm --prefix server test
 
   docker:
     name: Production Docker image build

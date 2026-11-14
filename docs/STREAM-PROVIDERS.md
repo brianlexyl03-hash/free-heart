@@ -80,3 +80,9 @@ BASE_URL=https://free-heart.de.deplexo.com sh scripts/test-stream-providers.sh
 ```
 
 That smoke test verifies health, the open-licensed demo search item, resolution, and a byte-range request through the public gateway. It is not a substitute for testing several configured real add-ons and watching a full stream for more than 20 seconds.
+
+## Built-in Internet Archive provider
+
+Free Heart also searches the Internet Archive movie collection automatically; no manifest URL or Render secret is required. Results use the `archive:<identifier>` ID namespace, title metadata is loaded from the Archive.org metadata API, and playback selects original downloadable video files (MP4, WebM, OGV, MOV, AVI, MKV, MPEG/TS, or HLS when present). The existing resolver then checks the media and sends it through the same opaque-token stream proxy, FFmpeg compatibility planner, and quality ladder. The provider intentionally skips private files, torrent files, metadata derivatives, and non-video assets. Internet Archive catalog availability and individual file availability can change independently.
+
+The Docker runtime includes Python 3 and copies `tools/authorized_stremio_scraper.py`; without those runtime files the optional `STREAM_ADDON_MANIFESTS` adapter would silently fail on Render even though it worked in a full development checkout.

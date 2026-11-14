@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/core.js"
+    "check": "node --check src/index.js && node --check src/core.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@fastify/rate-limit": "^9.1.0",
