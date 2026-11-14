@@ -179,7 +179,10 @@ function mintSmart(url, headers, kind, res, targetResolution, expectedDuration) 
   // straight back to the range-preserving stream; HEVC, 10-bit video, unusual
   // containers, and incompatible audio get a browser-safe FFmpeg path.
   // This prevents low-resolution HEVC files from bypassing compatibility checks.
-  return kind !== 'hls' ? m.replace('/api/stream/', '/api/remux/') : m;
+  // Keep an untouched multivariant HLS stream for Auto mode. An explicit
+  // quality request must enter the same FFmpeg path as file sources, because
+  // a single-variant HLS response has no browser-selectable 1080p–360p ladder.
+  return kind !== 'hls' || targetResolution ? m.replace('/api/stream/', '/api/remux/') : m;
 }
 async function passesRuntimeCheck(candidate, expectedDuration) {
   if (!haveFfmpeg()) return true;

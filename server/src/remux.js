@@ -100,7 +100,9 @@ export function remuxArgs(url, headers, plan) {
     '-map_metadata', '-1', '-map_chapters', '-1', '-map', '0:v:0', '-map', '0:a:0?', '-sn'];
   if (plan.mode === 'transcode') {
     const maxHeight = Math.max(144, Math.min(4320, Number(plan.targetHeight) || 720));
-    a.push('-vf', `scale=-2:min(${maxHeight}\\,ih)`, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-pix_fmt', 'yuv420p', '-g', '48', '-sc_threshold', '0');
+    const videoRate = maxHeight >= 1080 ? '5000k' : maxHeight >= 720 ? '3500k' : maxHeight >= 540 ? '2200k' : maxHeight >= 480 ? '1600k' : '900k';
+    const bufferRate = maxHeight >= 1080 ? '10000k' : maxHeight >= 720 ? '7000k' : maxHeight >= 540 ? '4400k' : maxHeight >= 480 ? '3200k' : '1800k';
+    a.push('-vf', `scale=-2:min(${maxHeight}\\,ih)`, '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '28', '-b:v', videoRate, '-maxrate', videoRate, '-bufsize', bufferRate, '-pix_fmt', 'yuv420p', '-g', '48', '-sc_threshold', '0');
   } else {
     a.push('-c:v', 'copy');
     if (plan.tagHevc) a.push('-tag:v', 'hvc1');

@@ -435,6 +435,7 @@ async function watchPage(id, episode) {
     let res = resolved.selectedResolution;
     let autoQuality = true;
     let lastAdapt = 0;
+    let switchingQuality = false;
     app.innerHTML = `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="vp-host" class="vp-host"></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>${esc(title)}</h2></div>${qualitySelect(resolved.resolutions, res)}</div><div id="player-message" class="notice subtle">${playerHint(resolved.kind)}</div><div id="clip-editor"></div>`;
     const message = document.getElementById('player-message');
     const posKey = `free.pos.${id}|${episode || ''}`;
@@ -444,16 +445,24 @@ async function watchPage(id, episode) {
     let watchTick = Date.now();
     let watchGateOpen = false;
     const switchQuality = async (r, fromAdaptive = false) => {
+      if (switchingQuality) return;
+      switchingQuality = true;
       message.textContent = 'Switching quality…';
       try {
         autoQuality = r === 'auto' || fromAdaptive;
         resolved = await resolveStream(id, episode, r === 'auto' ? undefined : r);
         candidateIndex = 0;
-        res = resolved.selectedResolution || r;
+        const requested = r === 'auto' ? 0 : Number(r) || 0;
+        const maxSource = Math.max(...(resolved.resolutions || []).map(Number).filter((n) => n > 0), 0);
+        // When the source is larger, the gateway transcodes to the requested
+        // target. When the source is smaller, keep the provider's real height
+        // instead of displaying an impossible/upscaled quality.
+        res = requested && (!maxSource || requested <= maxSource) ? requested : (resolved.selectedResolution || requested);
         vp.setSource(resolved.stream, { startAt: vp.video.currentTime, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res });
         const sel = document.getElementById('quality'); if (sel) sel.value = autoQuality ? 'auto' : String(res);
         message.textContent = autoQuality ? 'Auto quality enabled.' : 'Quality switched.';
       } catch (error) { message.innerHTML = errBox(error); }
+      finally { switchingQuality = false; }
     };
     vp = mountPlayer(document.getElementById('vp-host'), {
       src: resolved.stream, title, kind: resolved.kind, allowShortMedia: false, tracks: subs(resolved), qualities: resolved.resolutions || [], selectedQuality: res,
@@ -463,7 +472,7 @@ async function watchPage(id, episode) {
         if (autoQuality && Date.now() - lastAdapt > 6000 && vp?.video?.buffered?.length) {
           const v = vp.video; let end = 0;
           for (let i = 0; i < v.buffered.length; i += 1) if (v.buffered.start(i) <= t + 0.5) end = Math.max(end, v.buffered.end(i));
-          const ahead = end - t; const ladder = [1080, 720, 540, 480, 360]; const current = Number(resolved.selectedResolution || 1080); const pos = Math.max(0, ladder.indexOf(current));
+          const ahead = end - t; const maxSource = Math.max(...(resolved.resolutions || []).map(Number).filter((n) => n > 0), 0); const ladder = [1080, 720, 540, 480, 360].filter((height) => !maxSource || height <= maxSource); const current = Number(res || resolved.selectedResolution || ladder[0] || 360); const pos = Math.max(0, ladder.indexOf(current));
           const next = ahead < 5 && pos < ladder.length - 1 ? ladder[pos + 1] : ahead > 24 && pos > 0 ? ladder[pos - 1] : null;
           if (next) { lastAdapt = Date.now(); await switchQuality(next, true); }
         }

@@ -37,6 +37,8 @@ Downloads now call the gateway's media verifier before writing bytes to browser 
 
 MovieBox runtime validation now starts before the browser player: MovieBox-TUI's duration metadata (`30m`, `1h`, `HH:MM:SS`, and similar forms) is carried with the resolve response. A candidate must expose a real video stream and a runtime that is not an 8–30 second interstitial or materially shorter than the title runtime. Candidates that fail are removed from the resolver result and the next verified mirror is used; they are not merely hidden after playback starts.
 
+Adaptive playback now keeps Auto HLS untouched when the provider supplies a genuine multivariant manifest. Explicit 1080p, 720p, 540p, 480p, and 360p requests—including HLS sources that expose only one variant—are routed through FFmpeg with capped bitrate ladders, fragmented MP4 output, keyframes every 48 frames, and zero-latency x264 settings. The browser preserves the current position during a quality switch, and overlapping switches are prevented so a slow network does not start competing transcodes.
+
 The upstream BDIX CircleFTP and DhakaFlix providers use private `172.16.x.x` network addresses; they are intentionally not enabled for a public Render service because those addresses are not internet-facing sources.
 
 ## Apply from Termux
