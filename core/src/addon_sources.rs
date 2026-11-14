@@ -15,7 +15,7 @@ use std::{
 };
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
-const MAX_CONFIGURED_MANIFESTS: usize = 20;
+const MAX_CONFIGURED_MANIFESTS: usize = 30;
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// True only after at least one configured streaming-capable add-on was loaded.
