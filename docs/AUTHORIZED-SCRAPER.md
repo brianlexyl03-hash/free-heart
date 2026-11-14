@@ -16,3 +16,7 @@ python3 tools/authorized_stremio_scraper.py \
 The command performs a bounded range probe rather than downloading a movie. It returns JSON with `streams` and `rejected` entries and exits with status `2` when no candidate passes validation. Use only manifests and upstream media sources that you are authorized to access and redistribute.
 
 The filter can remove ad-marked HLS segments and reject ad-like URLs. It cannot remove an advertisement embedded inside an otherwise valid encoded video stream; doing that would require a provider-specific, authorized media-processing workflow.
+
+## Website integration
+
+The Fastify `/api/resolve` route now invokes this scraper concurrently with the Rust resolver whenever `STREAM_ADDON_MANIFESTS` is configured. Its validated direct candidates are merged with the Rust candidates, passed through the existing runtime/media checks, tokenized, and exposed to the web player and downloader. If Python is unavailable, the bridge returns no Python candidates and the existing Rust resolver remains available; it does not make the website fail solely because the optional scraper runtime is missing.

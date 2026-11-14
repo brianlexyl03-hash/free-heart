@@ -5,6 +5,7 @@ import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
 import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
@@ -194,6 +195,32 @@ async function passesRuntimeCheck(candidate, expectedDuration) {
   if (expectedDuration && info.duration < Math.max(45, expectedDuration * 0.45)) return false;
   return true;
 }
+function authorizedManifestUrls() {
+  return String(process.env.STREAM_ADDON_MANIFESTS || '')
+    .split(/[;\r\n]/).map((value) => value.trim()).filter(Boolean).slice(0, 30);
+}
+async function runAuthorizedScraper(mediaId, mediaType, episode) {
+  const manifests = authorizedManifestUrls();
+  const script = path.resolve(here, '../../tools/authorized_stremio_scraper.py');
+  if (!manifests.length) return { streams: [], rejected: [] };
+  const id = episode ? `${mediaId}:${episode}` : mediaId;
+  return await new Promise((resolve) => {
+    const args = [script, '--type', mediaType, '--id', id];
+    for (const manifest of manifests) args.push('--manifest', manifest);
+    const child = spawn(process.env.PYTHON_BIN || 'python3', args, { stdio: ['ignore', 'pipe', 'ignore'] });
+    let output = '';
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} resolve({ streams: [], rejected: ['authorized scraper timed out'] }); }, 20000);
+    child.stdout.on('data', (chunk) => { output += chunk; if (output.length > 2_000_000) { try { child.kill('SIGKILL'); } catch {} } });
+    child.on('error', () => { clearTimeout(timer); resolve({ streams: [], rejected: ['python scraper unavailable'] }); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      try {
+        const parsed = JSON.parse(output);
+        resolve({ streams: Array.isArray(parsed.streams) ? parsed.streams : [], rejected: Array.isArray(parsed.rejected) ? parsed.rejected : [] });
+      } catch { resolve({ streams: [], rejected: ['authorized scraper returned invalid JSON'] }); }
+    });
+  });
+}
 app.get('/api/live/channels/:id/playback', async (req, reply) => {
   const id = z.string().regex(/^[a-z0-9-]{1,50}$/i).parse(req.params.id);
   const channel = liveChannelSources.find((item) => String(item?.id) === id);
@@ -336,35 +363,42 @@ app.get('/api/title/:id', async (req) => core.title(Id.parse(req.params.id)));
 app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute' } } }, async (req) => {
   const b = z.object({ id: Id, episode: z.string().max(64).optional(), resolution: Resolution.nullish() }).parse(req.body);
   let r;
+  let coreError;
+  const scraperPromise = runAuthorizedScraper(b.id, b.episode ? 'series' : 'movie', b.episode);
   try { r = await core.resolve(b.id, b.episode, b.resolution ?? undefined); } catch (err) {
+    coreError = err;
     const clean = (v) => String(v || '').replace(/https?:\/\/\S+/g, '[url]').slice(0, 400);
     lastErrors.unshift({ at: new Date().toISOString(), name: err?.name, status: err?.statusCode || err?.status, message: clean(err?.message), kind: err?.kind, cause: clean(err?.cause?.message || err?.cause) });
     lastErrors.length = Math.min(lastErrors.length, 8);
-    throw err;
   }
-  req.log.info({ wanted: b.resolution, selected: r.selectedResolution, kind: r.kind, ext: (r.candidates || [{ url: r.url }]).map((c) => { try { return new URL(c.url).pathname.split('.').pop().slice(0, 8); } catch { return '?'; } }) }, 'resolve debug');
-  const sourceCandidates = r.candidates || [{ url: r.url, kind: r.kind, headers: r.headers }];
+  const scraped = await scraperPromise;
+  const sourceCandidates = [
+    ...(r?.candidates || (r?.url ? [{ url: r.url, kind: r.kind, headers: r.headers }] : [])),
+    ...scraped.streams.map((stream) => ({ url: stream.url, kind: stream.kind, headers: stream.headers || {} })),
+  ];
+  if (!sourceCandidates.length && coreError) throw coreError;
+  req.log.info({ wanted: b.resolution, selected: r?.selectedResolution, kind: r?.kind, coreCandidates: r?.candidates?.length || 0, authorizedCandidates: scraped.streams.length }, 'resolve debug');
   const checkedCandidates = (await Promise.all(sourceCandidates.map(async (candidate) => ({
     candidate,
-    valid: await passesRuntimeCheck(candidate, r.expectedDurationSeconds),
+    valid: await passesRuntimeCheck(candidate, r?.expectedDurationSeconds),
   })))).filter((item) => item.valid).map((item) => item.candidate);
-  if (!checkedCandidates.length) throw new CoreClientError(502, 'no_verified_media', 'No MovieBox source passed video and runtime verification. The provider returned ad-only or incomplete media responses.');
+  if (!checkedCandidates.length) throw new CoreClientError(502, 'no_verified_media', 'No authorized source passed video and runtime verification.');
   const candidates = checkedCandidates.map((candidate) => ({
     kind: candidate.kind,
-    stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r.selectedResolution, b.resolution ?? null, r.expectedDurationSeconds ?? null),
+    stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r?.selectedResolution || 0, b.resolution ?? null, r?.expectedDurationSeconds ?? null),
   }));
   const withDownloads = candidates.map((candidate) => ({
     ...candidate,
     download: candidate.kind === 'hls' ? candidate.stream.replace('/api/stream/', '/api/remux/') : candidate.stream,
   }));
   return {
-    kind: r.kind,
-    stream: withDownloads[0]?.stream || mint(r.url, r.headers),
+    kind: r?.kind || candidates[0]?.kind || 'file',
+    stream: withDownloads[0]?.stream || mint(sourceCandidates[0].url, sourceCandidates[0].headers),
     download: withDownloads[0]?.download || withDownloads[0]?.stream,
     candidates: withDownloads,
-    subtitles: (r.subtitles || []).map((s) => ({ lang: s.lang, label: s.label, src: mint(s.url, r.headers) })),
-    resolutions: r.resolutions || [],
-    selectedResolution: r.selectedResolution,
+    subtitles: (r?.subtitles || []).map((s) => ({ lang: s.lang, label: s.label, src: mint(s.url, r.headers) })),
+    resolutions: r?.resolutions || [],
+    selectedResolution: r?.selectedResolution || 0,
   };
 });
 
