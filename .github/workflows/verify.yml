@@ -41,6 +41,8 @@ jobs:
         run: npm ci --prefix server
       - name: Check server source
         run: npm --prefix server run check
+      - name: Run server unit tests
+        run: npm --prefix server test
 
   docker:
     name: Production Docker image build
