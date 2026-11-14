@@ -248,7 +248,36 @@ async function home() {
 }
 
 let activePlayer = null;
-const stopPlayer = () => { if (activePlayer) { activePlayer.destroy(); activePlayer = null; } };
+let watchTimer = null;
+let promoGate = null;
+const PROMO_URL = 'https://www.instagram.com/try_it_nah/';
+const stopPlayer = () => {
+  if (watchTimer) { clearInterval(watchTimer); watchTimer = null; }
+  if (activePlayer) { activePlayer.destroy(); activePlayer = null; }
+};
+
+function showPromoGate(reason = 'download') {
+  if (promoGate) return promoGate;
+  promoGate = new Promise((resolve) => {
+    let left = 10;
+    const layer = document.createElement('div');
+    layer.className = 'promo-gate';
+    layer.setAttribute('role', 'dialog');
+    layer.setAttribute('aria-modal', 'true');
+    layer.innerHTML = `<div class="promo-card"><div class="promo-visual" aria-hidden="true"><span class="promo-orbit promo-orbit-a"></span><span class="promo-orbit promo-orbit-b"></span><span class="promo-core">f</span><i class="promo-spark promo-spark-a"></i><i class="promo-spark promo-spark-b"></i><i class="promo-spark promo-spark-c"></i></div><span class="eyebrow">${reason === 'watch' ? 'Thanks for watching' : 'Before your download'}</span><h2>Follow the story behind free</h2><p>Visit <b>@try_it_nah</b> on Instagram for updates, new drops, and creator news.</p><a class="promo-follow" href="${PROMO_URL}" target="_blank" rel="noopener noreferrer">Open Instagram ↗</a><div class="promo-count" aria-live="polite">Your video continues in <b>10</b>s</div><button class="primary promo-continue" disabled>Continue</button></div>`;
+    document.body.appendChild(layer);
+    const count = layer.querySelector('.promo-count b');
+    const button = layer.querySelector('.promo-continue');
+    const finish = () => { clearInterval(timer); layer.remove(); promoGate = null; resolve(true); };
+    const timer = setInterval(() => {
+      left -= 1;
+      if (left <= 0) { count.textContent = '0'; button.disabled = false; layer.querySelector('.promo-count').innerHTML = 'Thanks for supporting the creator.'; button.textContent = 'Continue'; clearInterval(timer); }
+      else count.textContent = String(left);
+    }, 1000);
+    button.addEventListener('click', finish, { once: true });
+  });
+  return promoGate;
+}
 const parseEp = (key) => { const m = /^s(\d+)e(\d+)$/i.exec(String(key || '')); return m ? { s: Number(m[1]), e: Number(m[2]) } : { s: 0, e: 0 }; };
 const shortEp = (label) => String(label || '').split(' — ')[0];
 const epTitle = (ep) => ep.label.replace(/^S\d+E\d+\s*[—-]?\s*/i, '').trim() || `Episode ${parseEp(ep.key).e}`;
@@ -411,6 +440,9 @@ async function watchPage(id, episode) {
     const posKey = `free.pos.${id}|${episode || ''}`;
     const subs = (r) => (r.subtitles || []).map((s) => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) }));
     let vp;
+    let watchedMs = 0;
+    let watchTick = Date.now();
+    let watchGateOpen = false;
     const switchQuality = async (r, fromAdaptive = false) => {
       message.textContent = 'Switching quality…';
       try {
@@ -452,6 +484,20 @@ async function watchPage(id, episode) {
       },
     });
     activePlayer = vp;
+    watchTimer = setInterval(async () => {
+      const now = Date.now();
+      if (!vp?.video || vp.video.paused || document.visibilityState !== 'visible') { watchTick = now; return; }
+      watchedMs += Math.max(0, now - watchTick);
+      watchTick = now;
+      if (watchedMs < 50 * 60 * 1000 || watchGateOpen) return;
+      watchGateOpen = true;
+      vp.video.pause();
+      await showPromoGate('watch');
+      watchedMs = 0;
+      watchTick = Date.now();
+      watchGateOpen = false;
+      if (activePlayer === vp && document.visibilityState === 'visible') vp.video.play().catch(() => {});
+    }, 1000);
     document.getElementById('quality')?.addEventListener('change', (event) => switchQuality(event.target.value === 'auto' ? 'auto' : Number(event.target.value)));
   } catch (error) { app.innerHTML = errBox(error) + `<a class="secondary back-button" href="${titleUrl(id)}">← Back to title</a>`; }
 }
@@ -530,6 +576,7 @@ async function loadDownloads() {
 }
 
 async function queueDownloads({ id, data, items, resolution, out }) {
+  await showPromoGate('download');
   if (!navigator.storage?.getDirectory) { out.innerHTML = '<div class="notice error">This browser does not support private downloads.</div>'; return; }
   if (!('serviceWorker' in navigator)) { out.innerHTML = '<div class="notice error">Background downloads are not supported by this browser.</div>'; return; }
   const di = matureInfo({ id, title: data.title, overview: data.overview });
