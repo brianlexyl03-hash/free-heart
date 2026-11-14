@@ -9,6 +9,7 @@ A mobile-first web app for discovering media, watching through permitted sources
 
 - **Discover:** browse movies, series, episodes, and live matchday fixtures.
 - **Watch:** use the web player with subtitle and quality controls, plus fallback between supported sources.
+- **Internet Archive:** search and play public Archive.org movie files through the same verified playback pipeline.
 - **Save:** keep supported files for private offline playback.
 - **Create clips:** trim short moments in Clip Studio, add a title and caption, then download or share.
 - **Follow matches:** view fixtures, scores, match details, and broadcaster information supplied by the score provider.
