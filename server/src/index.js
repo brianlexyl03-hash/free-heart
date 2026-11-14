@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.js';
+import { searchArchive, getArchiveTitle, resolveArchive } from './archive-org.js';
 import { registerLiveScores } from './live-scores.js';
 import { registerLiveAlerts, startLiveAlerts } from './live-alerts.js';
 import { hasSubscription, registerPushRoutes, sendToEndpoint } from './push-notifications.js';
@@ -263,7 +264,17 @@ app.get('/api/siteguard/status', async () => ({
 
 app.get('/api/search', async (req) => {
   const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
-  return core.search(q, page);
+  const [coreResult, archiveResult] = await Promise.allSettled([core.search(q, page), searchArchive(q, page)]);
+  const archiveItems = archiveResult.status === 'fulfilled' ? archiveResult.value : [];
+  if (coreResult.status === 'rejected' && !archiveItems.length) throw coreResult.reason;
+  const base = coreResult.status === 'fulfilled' ? coreResult.value : { results: [], page, hasMore: false };
+  const seen = new Set();
+  const results = [...(base.results || []), ...archiveItems].filter((item) => {
+    if (!item?.id || seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+  return { ...base, results, page, hasMore: Boolean(base.hasMore || archiveItems.length >= 20) };
 });
 
 app.get('/api/shorts', async (req) => {
@@ -358,31 +369,61 @@ app.post('/api/ai/caption', { config: { rateLimit: { max: 30, timeWindow: '1 min
   return { title: String(parsed.title || body.title).slice(0, 100), caption: String(parsed.caption || content).slice(0, 500), model: body.model || AI_MODEL };
 });
 
-app.get('/api/title/:id', async (req) => core.title(Id.parse(req.params.id)));
+app.get('/api/title/:id', async (req) => {
+  const id = Id.parse(req.params.id);
+  if (id.startsWith('archive:')) return getArchiveTitle(id.slice('archive:'.length));
+  return core.title(id);
+});
 
 app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute' } } }, async (req) => {
   const b = z.object({ id: Id, episode: z.string().max(64).optional(), resolution: Resolution.nullish() }).parse(req.body);
   let r;
   let coreError;
-  const scraperPromise = runAuthorizedScraper(b.id, b.episode ? 'series' : 'movie', b.episode);
-  try { r = await core.resolve(b.id, b.episode, b.resolution ?? undefined); } catch (err) {
-    coreError = err;
-    const clean = (v) => String(v || '').replace(/https?:\/\/\S+/g, '[url]').slice(0, 400);
-    lastErrors.unshift({ at: new Date().toISOString(), name: err?.name, status: err?.statusCode || err?.status, message: clean(err?.message), kind: err?.kind, cause: clean(err?.cause?.message || err?.cause) });
-    lastErrors.length = Math.min(lastErrors.length, 8);
+  const isArchive = b.id.startsWith('archive:');
+  const scraperPromise = isArchive
+    ? Promise.resolve({ streams: [], rejected: [] })
+    : runAuthorizedScraper(b.id, b.episode ? 'series' : 'movie', b.episode);
+
+  if (isArchive) {
+    try {
+      const resolved = await resolveArchive(b.id.slice('archive:'.length));
+      if (!resolved.streams.length) {
+        throw new CoreClientError(404, 'archive_video_not_found', 'This Internet Archive item has no directly playable video file.');
+      }
+      r = {
+        kind: resolved.streams[0].kind,
+        candidates: resolved.streams,
+        expectedDurationSeconds: resolved.expectedDurationSeconds,
+        selectedResolution: 0,
+        resolutions: [],
+        subtitles: [],
+      };
+    } catch (err) {
+      if (err instanceof CoreClientError) throw err;
+      throw new CoreClientError(404, 'archive_item_unavailable', 'The Internet Archive item or its downloadable media is unavailable.');
+    }
+  } else {
+    try { r = await core.resolve(b.id, b.episode, b.resolution ?? undefined); } catch (err) {
+      coreError = err;
+      const clean = (v) => String(v || '').replace(/https?:\/\/\S+/g, '[url]').slice(0, 400);
+      lastErrors.unshift({ at: new Date().toISOString(), name: err?.name, status: err?.statusCode || err?.status, message: clean(err?.message), kind: err?.kind, cause: clean(err?.cause?.message || err?.cause) });
+      lastErrors.length = Math.min(lastErrors.length, 8);
+    }
   }
+
   const scraped = await scraperPromise;
   const sourceCandidates = [
     ...(r?.candidates || (r?.url ? [{ url: r.url, kind: r.kind, headers: r.headers }] : [])),
     ...scraped.streams.map((stream) => ({ url: stream.url, kind: stream.kind, headers: stream.headers || {} })),
   ];
   if (!sourceCandidates.length && coreError) throw coreError;
-  req.log.info({ wanted: b.resolution, selected: r?.selectedResolution, kind: r?.kind, coreCandidates: r?.candidates?.length || 0, authorizedCandidates: scraped.streams.length }, 'resolve debug');
+  if (!sourceCandidates.length) throw new CoreClientError(404, 'no_playable_stream', 'No directly playable media was found for this title.');
+  req.log.info({ wanted: b.resolution, selected: r?.selectedResolution, kind: r?.kind, coreCandidates: r?.candidates?.length || 0, authorizedCandidates: scraped.streams.length, archive: isArchive }, 'resolve debug');
   const checkedCandidates = (await Promise.all(sourceCandidates.map(async (candidate) => ({
     candidate,
     valid: await passesRuntimeCheck(candidate, r?.expectedDurationSeconds),
   })))).filter((item) => item.valid).map((item) => item.candidate);
-  if (!checkedCandidates.length) throw new CoreClientError(502, 'no_verified_media', 'No authorized source passed video and runtime verification.');
+  if (!checkedCandidates.length) throw new CoreClientError(502, 'no_verified_media', 'No source passed video and runtime verification.');
   const candidates = checkedCandidates.map((candidate) => ({
     kind: candidate.kind,
     stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r?.selectedResolution || 0, b.resolution ?? null, r?.expectedDurationSeconds ?? null),
@@ -396,7 +437,7 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
     stream: withDownloads[0]?.stream || mint(sourceCandidates[0].url, sourceCandidates[0].headers),
     download: withDownloads[0]?.download || withDownloads[0]?.stream,
     candidates: withDownloads,
-    subtitles: (r?.subtitles || []).map((s) => ({ lang: s.lang, label: s.label, src: mint(s.url, r.headers) })),
+    subtitles: (r?.subtitles || []).map((subtitle) => ({ lang: subtitle.lang, label: subtitle.label, src: mint(subtitle.url, r.headers) })),
     resolutions: r?.resolutions || [],
     selectedResolution: r?.selectedResolution || 0,
   };
