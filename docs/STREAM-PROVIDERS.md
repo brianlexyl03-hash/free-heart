@@ -31,6 +31,8 @@ The web player exposes Auto quality plus a 1080p/720p/540p/480p/360p ladder. A r
 
 Full-length movie and episode playback also rejects a candidate whose loaded media duration is 8–30 seconds, treating it as a likely provider interstitial and trying the next authorized candidate. Short-drama playback and saved local files explicitly allow short media, so legitimate short content is not blocked. Advertising redirects and HTML responses are rejected server-side; mid-roll advertising embedded inside an otherwise valid third-party stream is not removed or bypassed.
 
+The Rust core now keeps every unique HTTP/HLS mirror from every playable release returned for the selected provider, ordered by the requested quality. The gateway receives that complete candidate chain and can fail over across CDN mirrors instead of repeatedly retrying only the first release. Search already queries MovieBox, 4KHDHub, Dramachi, configured stream add-ons, and the optional WeFeed catalogue concurrently; up to twenty operator-authorized add-on manifests can be configured.
+
 The upstream BDIX CircleFTP and DhakaFlix providers use private `172.16.x.x` network addresses; they are intentionally not enabled for a public Render service because those addresses are not internet-facing sources.
 
 ## Apply from Termux

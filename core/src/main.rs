@@ -710,26 +710,33 @@ async fn resolve(
         .collect();
     resolutions.sort_unstable_by(|left, right| right.cmp(left));
     resolutions.dedup();
-    let release = releases
+    let mut playable: Vec<&Release> = releases
         .iter()
-        .filter(|release| {
-            request
-                .resolution
-                .map(|wanted| release.resolution_u64() as u32 == wanted)
-                .unwrap_or(true)
-        })
-        .find(|release| release.direct_url().is_some())
-        .or_else(|| {
-            releases
-                .iter()
-                .find(|release| release.direct_url().is_some())
-        })
-        .ok_or_else(|| ApiError {
-            status: StatusCode::NOT_FOUND,
-            kind: "stream_unavailable",
-            message: format!("No playable stream is available from {active_provider}; try another search result or quality"),
-        })?;
-    let candidates = resolve_candidates(release);
+        .filter(|release| release.direct_url().is_some())
+        .collect();
+    playable.sort_by(|left, right| {
+        if let Some(wanted) = request.resolution {
+            let l = (left.resolution_u64() as u32).abs_diff(wanted);
+            let r = (right.resolution_u64() as u32).abs_diff(wanted);
+            l.cmp(&r).then_with(|| right.resolution_u64().cmp(&left.resolution_u64()))
+        } else {
+            right.resolution_u64().cmp(&left.resolution_u64())
+        }
+    });
+    let release = playable.first().copied().ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        kind: "stream_unavailable",
+        message: format!("No playable stream is available from {active_provider}; try another search result or quality"),
+    })?;
+    // A release can expose several mirrors, and a provider can expose several
+    // releases. Keep all unique HTTP/HLS candidates in quality order so the
+    // gateway can fail over instead of repeatedly retrying one broken CDN.
+    let mut seen_urls = std::collections::HashSet::new();
+    let candidates = playable
+        .iter()
+        .flat_map(|item| resolve_candidates(item))
+        .filter(|candidate| seen_urls.insert(candidate.url.clone()))
+        .collect::<Vec<_>>();
     let first = candidates.first().ok_or_else(|| ApiError {
         status: StatusCode::NOT_FOUND,
         kind: "stream_unavailable",
