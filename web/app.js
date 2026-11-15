@@ -279,6 +279,31 @@ async function home() {
   checkUpstreamUpdate();
 }
 
+function newsDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value || '') : date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function newsAd(ad) {
+  if (!ad?.enabled || !ad.url) return '';
+  return `<aside class="news-ad-slot" aria-label="Advertisement"><span>ADVERTISEMENT</span><a href="${esc(ad.url)}" target="_blank" rel="sponsored noopener noreferrer"><b>${esc(ad.title || 'Featured')}</b><small>${esc(ad.description || '')}</small><em>${esc(ad.label || 'From free-heart')} ↗</em></a></aside>`;
+}
+async function newsPage(articleId = '') {
+  app.innerHTML = '<section class="news-article"><div class="loading"><i></i><span>Loading live news…</span></div></section>';
+  try {
+    const [data, ad] = await Promise.all([api('/api/football-news?feed=football'), api('/api/ads/search').catch(() => null)]);
+    const items = Array.isArray(data.items) ? data.items : [];
+    const item = articleId ? items.find((entry) => String(entry.id) === articleId) : null;
+    if (articleId && !item) throw new Error('That story is no longer in the live news window. Return to the latest headlines.');
+    if (item) {
+      app.innerHTML = `<article class="news-article">${newsAd(ad)}<span class="eyebrow">Football · ${esc(item.verification || 'reported')}</span><h1>${esc(item.title)}</h1>${item.image ? `<figure><img src="${esc(item.image)}" alt="${esc(item.title)}" loading="eager"><figcaption>Image supplied by ${esc(item.source || data.source || 'the source feed')}.</figcaption></figure>` : ''}<p class="news-byline"><b>${esc(item.source || data.source || 'News source')}</b> · ${esc(newsDate(item.publishedAt))}</p><p class="news-lead"><strong>${esc(item.summary || 'Read the original report for the latest details.')}</strong></p><p>This is a concise, source-linked news brief. The original publisher may update its report as more information becomes available.</p><p><a class="news-back" href="#/news">← Latest live news</a> · <a class="news-back" href="${esc(item.link || '#')}" target="_blank" rel="nofollow noopener noreferrer">Read original report ↗</a></p></article>`;
+      return;
+    }
+    app.innerHTML = `<section class="news-article news-page">${newsAd(ad)}<span class="eyebrow">Fast, attributed news</span><h1>Latest football news</h1><p class="news-lead">Live headlines collected from permitted feeds, refreshed by the server and linked back to the original reporting.</p><p class="news-updated">Last refreshed ${esc(data.updatedAt ? new Date(data.updatedAt).toLocaleString() : 'just now')}</p><div class="news-grid">${items.map((entry) => `<a class="news-card" href="#/news/${encodeURIComponent(entry.id)}">${entry.image ? `<img loading="lazy" src="${esc(entry.image)}" alt="">` : '<div class="news-card-placeholder"></div>'}<span><small>${esc(entry.source || data.source || 'News')} · ${esc(newsDate(entry.publishedAt))}</small><strong>${esc(entry.title)}</strong><em>${esc(entry.summary || '')}</em></span></a>`).join('') || '<div class="notice">Live news is unavailable right now. Try again shortly.</div>'}</div></section>`;
+  } catch (error) {
+    app.innerHTML = `<section class="news-article"><div class="notice error"><strong>Live news unavailable</strong><p>${esc(error?.message || 'Try again shortly.')}</p><a class="news-back" href="#/news">Try again</a></div></section>`;
+  }
+}
+
 let activePlayer = null;
 let watchTimer = null;
 let promoGate = null;
@@ -952,6 +977,7 @@ function route() {
   const [segment, rawTail = ''] = location.hash.replace(/^#\//, '').split('/');
   if (segment === 'title') return titlePage(decodeURIComponent(rawTail));
   if (segment === 'live') return; // web/live.js owns the Live Match Center route
+  if (segment === 'news') return newsPage(rawTail ? decodeURIComponent(rawTail) : '');
   if (segment === 'watch') { const [rawId, query] = rawTail.split('?'); return watchPage(decodeURIComponent(rawId), new URLSearchParams(query).get('ep')); }
   if (segment === 'downloads') return downloadsPage();
   if (segment === 'shorts') return shortsPage();
