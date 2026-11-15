@@ -181,7 +181,21 @@ function subtitleCode(label) {
 
 function renderSponsoredCard(ad) {
   if (!ad?.enabled || !ad.url) return '';
-  return `<a class="sponsored-search-card" href="${esc(ad.url)}" target="_blank" rel="sponsored noopener noreferrer"><span class="sponsored-search-label">${esc(ad.label || 'Sponsored')}</span>${ad.image ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(ad.image)}" alt="">` : ''}<span><strong>${esc(ad.title || 'Featured')}</strong>${ad.description ? `<small>${esc(ad.description)}</small>` : ''}<em>Open offer ↗</em></span></a>`;
+  return `<a class="sponsored-search-card" data-campaign="${esc(ad.campaignId || 'campaign')}" href="${esc(ad.url)}" target="_blank" rel="sponsored noopener noreferrer"><span class="sponsored-search-label">${esc(ad.label || 'Sponsored')}</span>${ad.image ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(ad.image)}" alt="">` : ''}<span><strong>${esc(ad.title || 'Featured')}</strong>${ad.description ? `<small>${esc(ad.description)}</small>` : ''}<em>Open offer ↗</em></span></a>`;
+}
+function wireSponsoredTracking() {
+  document.querySelectorAll('.sponsored-search-card:not([data-tracked])').forEach((card) => {
+    card.dataset.tracked = '1';
+    const campaignId = card.dataset.campaign;
+    const send = (event) => {
+      const body = JSON.stringify({ campaignId });
+      const blob = new Blob([body], { type: 'application/json' });
+      if (navigator.sendBeacon) navigator.sendBeacon(`/api/ads/${event}`, blob);
+      else fetch(`/api/ads/${event}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: true }).catch(() => {});
+    };
+    send('impression');
+    card.addEventListener('click', () => send('click'), { once: true });
+  });
 }
 function renderCards(items, heading = '', sponsor = null) {
   const all = items || [];
@@ -214,6 +228,7 @@ async function home() {
     if (searchItems.length) {
       const hadMore = Boolean(document.getElementById('load-more'));
       results.innerHTML = renderCards(searchItems, `Results for “${input.value.trim()}”`, searchAd) + (hadMore ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '');
+      wireSponsoredTracking();
     }
     document.getElementById('load-more')?.addEventListener('click', () => search({ more: true }));
   }).catch(() => {});
@@ -244,6 +259,7 @@ async function home() {
       searchPage = page;
       const moreButton = data.hasMore && searchItems.length > previousCount ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '';
       results.innerHTML = renderCards(searchItems, `Results for “${query}”`, searchAd) + moreButton;
+      wireSponsoredTracking();
       document.getElementById('load-more')?.addEventListener('click', () => search({ more: true }));
     } catch (error) {
       if (requestId !== searchRequest) return;

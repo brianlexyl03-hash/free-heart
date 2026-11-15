@@ -63,6 +63,7 @@ Render provides `PORT`. The gateway binds to `0.0.0.0`; the Rust sidecar is inte
 | `NEWS_DB_FILE` | Persistent store for recent attributed news items |
 | `NEWS_RSS_FEEDS` | Optional permissioned RSS/Atom feeds for corroboration and official updates |
 | `SEARCH_AD_URL`, `SEARCH_AD_*` | Optional clearly labelled sponsored tile between search results |
+| `FIRST_PARTY_CAMPAIGNS_ENABLED`, `FIRST_PARTY_CAMPAIGNS_JSON` | Rotating cross-promotions for your own apps and features |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional Web Push delivery |
 | `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY` | Optional server-managed caption provider |
 | `ADMIN_PASSWORD` | Protects owner controls |

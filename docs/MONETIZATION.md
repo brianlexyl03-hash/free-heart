@@ -1,17 +1,21 @@
-# Search-result monetization
+# First-party campaign bot
 
-The website now supports an optional, clearly labelled sponsored tile in the movie search results. It appears after every eight results and is disabled unless `SEARCH_AD_URL` is a valid HTTPS URL. Configure it in deployment:
+The search-result sponsored placement now has a first-party campaign bot. It rotates between the site’s working features without cookies, account profiles, IP storage, or third-party ad scripts:
+
+- **Live Match Center** → `/#/live`
+- **Clip Studio** → `/#/about`
+- **Offline Saves** → `/#/downloads`
+- **AI captions and hashtags** → `/#/about`
+
+The bot chooses a weighted campaign whenever the search page requests its sponsored tile. The tile appears after every eight movie results, is labelled `From free-heart`, and opens the feature in a new tab. Aggregate in-memory impression and click counters are accepted through `/api/ads/impression` and `/api/ads/click`; no personal identifier is attached and counters reset when the process restarts.
+
+To replace the defaults with separate first-party apps, set a JSON campaign list in deployment:
 
 ```env
-SEARCH_AD_URL=https://your-advertiser-landing-page.example/offer
-SEARCH_AD_LABEL=Sponsored
-SEARCH_AD_TITLE=Your offer title
-SEARCH_AD_DESCRIPTION=Short, accurate description
-SEARCH_AD_IMAGE=https://your-cdn.example/creative.jpg
+FIRST_PARTY_CAMPAIGNS_ENABLED=true
+FIRST_PARTY_CAMPAIGNS_JSON=[{"id":"my-app","title":"My other app","description":"Open the app","url":"https://my-app.example","image":"https://cdn.example/my-app.jpg","label":"From my apps","weight":2,"enabled":true}]
 ```
 
-The tile opens the configured landing page in a new tab with `rel="sponsored noopener noreferrer"`. The app does not inject arbitrary scripts, obscure the sponsored label, or collect click identifiers. Use a campaign URL created in Meta Ads Manager as the landing destination if Meta is buying traffic to your site.
+Only HTTPS external URLs or same-site paths beginning with `/` are accepted. Invalid campaigns are discarded. If the rotation is disabled with `FIRST_PARTY_CAMPAIGNS_ENABLED=false`, the legacy `SEARCH_AD_*` configuration is used instead.
 
-Meta’s current Audience Network documentation describes ads served inside partner mobile apps. It is not a general web-site ad feed that this server can legally or reliably pull into arbitrary search results. Therefore the site does not pretend to be a Meta publisher or invent a Meta placement ID. If Meta approves a supported publisher/app placement for this project, integrate it through Meta’s official SDK and policy review rather than scraping Meta ads. For a normal website, use an approved web publisher network or the owner-configured sponsored tile above.
-
-Any real ad campaign must comply with Meta’s advertising standards, privacy/consent requirements, children’s and mature-content rules, and the laws applicable to the site’s visitors. Do not place ads inside a playback control, disguise ads as movie results, or use forced clicks.
+The website does not pretend to serve Meta Audience Network inventory. Meta’s current Audience Network documentation describes supported partner mobile-app placements, not a general web-site ad feed. This bot is therefore an owner-controlled cross-promotion system for your own apps and features, not a paid third-party ad exchange.

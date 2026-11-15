@@ -16,6 +16,7 @@ import { registerLiveAlerts, startLiveAlerts } from './live-alerts.js';
 import { hasSubscription, registerPushRoutes, sendToEndpoint } from './push-notifications.js';
 import { startAutomaticPush } from './auto-push.js';
 import { getNews, getNewsArticle, getNewsSitemapItems, startNewsRefresh } from './news-service.js';
+import { nextCampaign, recordCampaignEvent } from './first-party-campaigns.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = Fastify({
@@ -281,14 +282,21 @@ app.get('/api/search', async (req) => {
 function publicHttpsUrl(value) {
   try { const url = new URL(String(value || '')); return url.protocol === 'https:' ? url.href : ''; } catch { return ''; }
 }
-app.get('/api/ads/search', async () => ({
-  enabled: Boolean(publicHttpsUrl(process.env.SEARCH_AD_URL)),
-  label: String(process.env.SEARCH_AD_LABEL || 'Sponsored').slice(0, 40),
-  title: String(process.env.SEARCH_AD_TITLE || '').slice(0, 120),
-  description: String(process.env.SEARCH_AD_DESCRIPTION || '').slice(0, 220),
-  image: publicHttpsUrl(process.env.SEARCH_AD_IMAGE),
-  url: publicHttpsUrl(process.env.SEARCH_AD_URL),
-}));
+app.get('/api/ads/search', async () => {
+  const campaign = nextCampaign();
+  if (campaign) return { enabled: true, campaignId: campaign.id, label: campaign.label, title: campaign.title, description: campaign.description, image: campaign.image, url: campaign.url };
+  return { enabled: Boolean(publicHttpsUrl(process.env.SEARCH_AD_URL)), campaignId: 'legacy-search-ad', label: String(process.env.SEARCH_AD_LABEL || 'Sponsored').slice(0, 40), title: String(process.env.SEARCH_AD_TITLE || '').slice(0, 120), description: String(process.env.SEARCH_AD_DESCRIPTION || '').slice(0, 220), image: publicHttpsUrl(process.env.SEARCH_AD_IMAGE), url: publicHttpsUrl(process.env.SEARCH_AD_URL) };
+});
+app.post('/api/ads/impression', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (req, reply) => {
+  const { campaignId } = z.object({ campaignId: z.string().trim().min(1).max(50) }).parse(req.body || {});
+  recordCampaignEvent(campaignId, 'impression');
+  return reply.code(204).send();
+});
+app.post('/api/ads/click', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+  const { campaignId } = z.object({ campaignId: z.string().trim().min(1).max(50) }).parse(req.body || {});
+  recordCampaignEvent(campaignId, 'click');
+  return reply.code(204).send();
+});
 
 app.get('/api/shorts', async (req) => {
   const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
