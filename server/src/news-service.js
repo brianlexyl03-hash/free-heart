@@ -2,7 +2,16 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DB = process.env.NEWS_DB_FILE || path.join(process.cwd(), 'data', 'news-items.json');
+const PRODUCTION = process.env.NODE_ENV === 'production';
+const APP_DIR = path.resolve(process.cwd());
+const DATA_DIR = process.env.DATA_DIR || (PRODUCTION ? '/data' : path.join(process.cwd(), 'data'));
+const requestedDb = path.resolve(process.env.NEWS_DB_FILE || path.join(DATA_DIR, 'news-items.json'));
+const inside = (target, directory) => target === directory || target.startsWith(directory + path.sep);
+// Production must never write its cache into the immutable application image or /tmp.
+// The /data mount is the durable service volume used by the deployed application.
+const DB = PRODUCTION && (inside(requestedDb, APP_DIR) || inside(requestedDb, '/tmp'))
+  ? '/data/news-items.json'
+  : requestedDb;
 const MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT = 7000;
 const cache = new Map();
