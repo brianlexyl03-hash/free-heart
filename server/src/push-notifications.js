@@ -8,10 +8,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import webpush from 'web-push';
 
-const PRIMARY_DB = path.resolve(process.env.PUSH_DB_FILE || path.join(process.cwd(), 'data', 'push-subscriptions.json'));
-const FALLBACK_DB = path.join('/tmp', 'free-heart-push-subscriptions.json');
-let activeDb = PRIMARY_DB;
-let fallbackWarningLogged = false;
+// Deplexo's persistent volume is mounted at /data. Override PUSH_DB_FILE only
+// when the deployment has a different persistent mount configured.
+const DB = path.resolve(
+  process.env.PUSH_DB_FILE ||
+  path.join(process.env.DATA_DIR || (process.env.NODE_ENV === 'production' ? '/data' : path.join(process.cwd(), 'data')), 'push-subscriptions.json')
+);
+const LEGACY_DB = path.resolve(path.join(process.cwd(), 'data', 'push-subscriptions.json'));
 
 // Environment values are often pasted with surrounding quotes or whitespace.
 // VAPID keys must be unpadded base64url strings.
@@ -62,38 +65,49 @@ function assertConfig() {
   }
 }
 
-function read() {
-  for (const candidate of [activeDb, PRIMARY_DB, FALLBACK_DB]) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
-      if (Array.isArray(parsed)) {
-        activeDb = candidate;
-        return parsed;
-      }
-    } catch {}
+function readFileIfPresent(file) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!Array.isArray(parsed)) throw new Error('subscription store must contain a JSON array');
+    return parsed;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw new Error(`[push] Cannot read subscription store ${file}: ${error.message}`, { cause: error });
   }
+}
+
+function read() {
+  const current = readFileIfPresent(DB);
+  if (current !== null) return current;
+
+  // Migrate subscriptions from the old app-local path if it still exists.
+  if (LEGACY_DB !== DB) {
+    const legacy = readFileIfPresent(LEGACY_DB);
+    if (legacy !== null) {
+      write(legacy);
+      console.info(`[push] Migrated ${legacy.length} subscriptions to persistent storage.`);
+      return legacy;
+    }
+  }
+
   return [];
 }
 
 function write(items) {
+  const directory = path.dirname(DB);
+  const temporaryFile = `${DB}.${process.pid}.tmp`;
   const payload = JSON.stringify(items, null, 2);
-  const candidates = [...new Set([activeDb, PRIMARY_DB, FALLBACK_DB])];
-  let lastError;
-  for (const candidate of candidates) {
-    try {
-      fs.mkdirSync(path.dirname(candidate), { recursive: true });
-      fs.writeFileSync(candidate, payload, { mode: 0o600 });
-      activeDb = candidate;
-      if (candidate === FALLBACK_DB && !fallbackWarningLogged) {
-        fallbackWarningLogged = true;
-        console.warn('[push] Primary subscription store unavailable; using temporary fallback storage. Configure PUSH_DB_FILE to a writable persistent path to retain subscriptions across restarts.');
-      }
-      return;
-    } catch (error) {
-      lastError = error;
-    }
+
+  // Never fall back to disposable storage: failed writes must be visible.
+  fs.mkdirSync(directory, { recursive: true });
+
+  try {
+    fs.writeFileSync(temporaryFile, payload, { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temporaryFile, DB);
+  } catch (error) {
+    try { fs.rmSync(temporaryFile, { force: true }); } catch {}
+    throw new Error(`[push] Persistent subscription store write failed at ${DB}: ${error.message}`, { cause: error });
   }
-  console.error('[push] Could not save subscriptions to primary or fallback storage:', lastError?.message || 'unknown filesystem error');
 }
 
 export function registerPushRoutes(fastify) {
