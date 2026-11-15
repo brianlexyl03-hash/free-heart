@@ -111,18 +111,23 @@ function qualityRank(name) {
   return match ? Number(match[1]) : 0;
 }
 
+function formatRank(name) {
+  const value = extension(name);
+  return value === '.mp4' ? 5 : value === '.webm' ? 4 : value === '.ogv' || value === '.ogg' ? 3 : value === '.m4v' ? 2 : value === '.mov' ? 1 : 0;
+}
+
 export function selectArchiveVideoFiles(files) {
   if (!Array.isArray(files)) return [];
   return files
     .filter((file) => {
       if (!file || typeof file.name !== 'string' || ['true', '1'].includes(String(file.private).toLowerCase())) return false;
-      if (file.source && file.source !== 'original') return false;
       if (file.format && /metadata|text|thumbnail|image|torrent|archive bit torrent/i.test(String(file.format))) return false;
+      if (file.source === 'derivative' && !/(video|h\.264|mpeg|quicktime|webm|ogg|avc)/i.test(String(file.format || ''))) return false;
       return VIDEO_EXTENSIONS.has(extension(file.name)) && !file.name.includes('../');
     })
     .sort((a, b) => {
       const source = Number(b.source === 'original') - Number(a.source === 'original');
-      return source || qualityRank(b.name) - qualityRank(a.name) || Number(b.size || 0) - Number(a.size || 0);
+      return source || qualityRank(b.name) - qualityRank(a.name) || formatRank(b.name) - formatRank(a.name) || Number(b.size || 0) - Number(a.size || 0);
     })
     .slice(0, 12);
 }

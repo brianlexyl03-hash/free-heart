@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.js';
 import { searchArchive, getArchiveTitle, resolveArchive } from './archive-org.js';
+import { searchOpenMedia, getOpenMediaTitle, resolveOpenMedia, isOpenMediaId } from './open-media-sources.js';
 import { registerLiveScores } from './live-scores.js';
 import { registerLiveAlerts, startLiveAlerts } from './live-alerts.js';
 import { hasSubscription, registerPushRoutes, sendToEndpoint, sendToEndpoints } from './push-notifications.js';
@@ -260,13 +261,14 @@ app.get('/api/siteguard/status', async () => ({
 
 app.get('/api/search', async (req) => {
   const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
-  const [coreResult, archiveResult, newsResult] = await Promise.allSettled([core.search(q, page), searchArchive(q, page), getNews({ category: 'football', limit: 60 })]);
+  const [coreResult, archiveResult, openMediaResult, newsResult] = await Promise.allSettled([core.search(q, page), searchArchive(q, page), searchOpenMedia(q, page), getNews({ category: 'football', limit: 60 })]);
   const archiveItems = archiveResult.status === 'fulfilled' ? archiveResult.value : [];
+  const openMediaItems = openMediaResult.status === 'fulfilled' ? openMediaResult.value : [];
   const freshNews = newsResult.status === 'fulfilled' ? newsResult.value.items : [];
-  if (coreResult.status === 'rejected' && !archiveItems.length && !freshNews.length) throw coreResult.reason;
+  if (coreResult.status === 'rejected' && !archiveItems.length && !openMediaItems.length && !freshNews.length) throw coreResult.reason;
   const base = coreResult.status === 'fulfilled' ? coreResult.value : { results: [], page, hasMore: false };
   const seen = new Set();
-  const results = [...(base.results || []), ...archiveItems].filter((item) => {
+  const results = [...(base.results || []), ...archiveItems, ...openMediaItems].filter((item) => {
     if (!item?.id || seen.has(item.id)) return false;
     seen.add(item.id);
     return true;
@@ -281,7 +283,7 @@ app.get('/api/search', async (req) => {
     { kind: 'Social', source: 'Instagram', title: `${q} on Instagram`, url: searchUrl('Instagram'), description: 'Search Instagram results; verify the account before treating it as official.' },
     { kind: 'Social', source: 'X', title: `${q} on X`, url: searchUrl('X'), description: 'Search public posts and profiles on X.' },
   ];
-  return { ...base, results, page, hasMore: Boolean(base.hasMore || archiveItems.length >= 20), news, related, web };
+  return { ...base, results, page, hasMore: Boolean(base.hasMore || archiveItems.length >= 20 || openMediaItems.length >= 20), news, related, web };
 });
 
 function publicHttpsUrl(value) {
@@ -397,6 +399,10 @@ app.post('/api/ai/caption', { config: { rateLimit: { max: 30, timeWindow: '1 min
 
 app.get('/api/title/:id', async (req) => {
   const id = Id.parse(req.params.id);
+  if (isOpenMediaId(id)) {
+    try { return await getOpenMediaTitle(id); }
+    catch { throw new CoreClientError(404, 'open_media_item_unavailable', 'This authorized open-media item is unavailable or failed its rights/media checks.'); }
+  }
   if (id.startsWith('archive:')) {
     try { return await getArchiveTitle(id.slice('archive:'.length)); }
     catch { throw new CoreClientError(404, 'archive_item_unavailable', 'This Internet Archive item is unavailable.'); }
@@ -409,7 +415,8 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
   let r;
   let coreError;
   const isArchive = b.id.startsWith('archive:');
-  const scraperPromise = isArchive
+  const isOpenMedia = isOpenMediaId(b.id);
+  const scraperPromise = isArchive || isOpenMedia
     ? Promise.resolve({ streams: [], rejected: [] })
     : runAuthorizedScraper(b.id, b.episode ? 'series' : 'movie', b.episode);
 
@@ -431,6 +438,15 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
       if (err instanceof CoreClientError) throw err;
       throw new CoreClientError(404, 'archive_item_unavailable', 'The Internet Archive item or its downloadable media is unavailable.');
     }
+  } else if (isOpenMedia) {
+    try {
+      const resolved = await resolveOpenMedia(b.id);
+      if (!resolved.streams.length) throw new CoreClientError(404, 'open_media_video_not_found', 'This authorized source has no directly playable media.');
+      r = { kind: resolved.streams[0].kind, candidates: resolved.streams, expectedDurationSeconds: resolved.expectedDurationSeconds, selectedResolution: 0, resolutions: [], subtitles: [] };
+    } catch (err) {
+      if (err instanceof CoreClientError) throw err;
+      throw new CoreClientError(404, 'open_media_item_unavailable', 'The authorized source item or its downloadable media is unavailable.');
+    }
   } else {
     try { r = await core.resolve(b.id, b.episode, b.resolution ?? undefined); } catch (err) {
       coreError = err;
@@ -447,7 +463,7 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
   ];
   if (!sourceCandidates.length && coreError) throw coreError;
   if (!sourceCandidates.length) throw new CoreClientError(404, 'no_playable_stream', 'No directly playable media was found for this title.');
-  req.log.info({ wanted: b.resolution, selected: r?.selectedResolution, kind: r?.kind, coreCandidates: r?.candidates?.length || 0, authorizedCandidates: scraped.streams.length, archive: isArchive }, 'resolve debug');
+  req.log.info({ wanted: b.resolution, selected: r?.selectedResolution, kind: r?.kind, coreCandidates: r?.candidates?.length || 0, authorizedCandidates: scraped.streams.length, archive: isArchive, openMedia: isOpenMedia }, 'resolve debug');
   const checkedCandidates = (await Promise.all(sourceCandidates.map(async (candidate) => ({
     candidate,
     valid: await passesRuntimeCheck(candidate, r?.expectedDurationSeconds),
@@ -742,7 +758,12 @@ app.get('/', async (_req, reply) => reply.type('text/html').send(await seoIndex(
 app.get('/about', async (_req, reply) => reply.type('text/html').send(await seoIndex({ title: 'About free❤️‍🔥 — Private offline playback and Clip Studio', description: 'Learn how free❤️‍🔥 supports streaming, private offline playback, browser-based clipping, and AI captions.', pathName: '/about', body: '<section class="seo-intro"><span class="eyebrow">About free❤️‍🔥</span><h1>Stories, on your terms.</h1><p>Free❤️‍🔥 is a mobile-friendly streaming PWA with browser-private downloads, subtitles, a VLC-style player, and Clip Studio for short-form edits and AI captions.</p><p><a href="/">Back to search</a></p></section>' })));
 app.get('/title/:id', async (req, reply) => {
   try {
-    const data = await core.title(Id.parse(req.params.id));
+    const parsedId = Id.parse(req.params.id);
+    const data = isOpenMediaId(parsedId)
+      ? await getOpenMediaTitle(parsedId)
+      : parsedId.startsWith('archive:')
+        ? await getArchiveTitle(parsedId.slice('archive:'.length))
+        : await core.title(parsedId);
     const title = String(data.title || 'Watch this title');
     const description = String(data.overview || `Watch ${title} online with free❤️‍🔥.`).slice(0, 155);
     const id = encodeURIComponent(req.params.id);
@@ -760,7 +781,9 @@ app.get('/robots.txt', async (_req, reply) => {
 async function publicMovieUrls() {
   const responses = await Promise.allSettled(['popular', 'trending', 'latest movies'].map((query) => core.search(query, 1)));
   const seen = new Set();
-  return responses.flatMap((response) => response.status === 'fulfilled' ? response.value.results || [] : []).filter((item) => item?.id && !seen.has(String(item.id)) && seen.add(String(item.id))).slice(0, 500).map((item) => `/title/${encodeURIComponent(item.id)}`);
+  const providerItems = responses.flatMap((response) => response.status === 'fulfilled' ? response.value.results || [] : []);
+  const lawfulSamples = ['archive:BigBuckBunny_124', 'commons:20022660', 'blender:1065', 'loc:00694131', 'nasa:KSC-19850101-MH-NAS01-0001-Apollo_11_Buzz_Aldrin_Experts-B_2141'].map((id) => ({ id }));
+  return [...providerItems, ...lawfulSamples].filter((item) => item?.id && !seen.has(String(item.id)) && seen.add(String(item.id))).slice(0, 505).map((item) => `/title/${encodeURIComponent(item.id)}`);
 }
 app.get('/news-sitemap.xml', async (_req, reply) => {
   if (!PUBLIC_SITE_URL) return reply.code(503).type('text/plain').send('Set PUBLIC_SITE_URL before exposing a news sitemap.');
