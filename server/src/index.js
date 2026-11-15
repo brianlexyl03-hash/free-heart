@@ -278,6 +278,18 @@ app.get('/api/search', async (req) => {
   return { ...base, results, page, hasMore: Boolean(base.hasMore || archiveItems.length >= 20) };
 });
 
+function publicHttpsUrl(value) {
+  try { const url = new URL(String(value || '')); return url.protocol === 'https:' ? url.href : ''; } catch { return ''; }
+}
+app.get('/api/ads/search', async () => ({
+  enabled: Boolean(publicHttpsUrl(process.env.SEARCH_AD_URL)),
+  label: String(process.env.SEARCH_AD_LABEL || 'Sponsored').slice(0, 40),
+  title: String(process.env.SEARCH_AD_TITLE || '').slice(0, 120),
+  description: String(process.env.SEARCH_AD_DESCRIPTION || '').slice(0, 220),
+  image: publicHttpsUrl(process.env.SEARCH_AD_IMAGE),
+  url: publicHttpsUrl(process.env.SEARCH_AD_URL),
+}));
+
 app.get('/api/shorts', async (req) => {
   const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
   return core.shorts(q, page);

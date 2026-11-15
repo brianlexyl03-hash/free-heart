@@ -179,7 +179,11 @@ function subtitleCode(label) {
   return 'und';
 }
 
-function renderCards(items, heading = '') {
+function renderSponsoredCard(ad) {
+  if (!ad?.enabled || !ad.url) return '';
+  return `<a class="sponsored-search-card" href="${esc(ad.url)}" target="_blank" rel="sponsored noopener noreferrer"><span class="sponsored-search-label">${esc(ad.label || 'Sponsored')}</span>${ad.image ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(ad.image)}" alt="">` : ''}<span><strong>${esc(ad.title || 'Featured')}</strong>${ad.description ? `<small>${esc(ad.description)}</small>` : ''}<em>Open offer ↗</em></span></a>`;
+}
+function renderCards(items, heading = '', sponsor = null) {
   const all = items || [];
   const hideMode = getMode() === 'hide';
   const shown = hideMode ? all.filter((i) => !matureInfo(i).mature) : all;
@@ -190,7 +194,8 @@ function renderCards(items, heading = '') {
     const m = matureInfo(item);
     return `<a class="poster-card ${m.mature ? 'mature' : ''}" href="${titleUrl(item.id)}"><div class="poster-wrap">${item.poster ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(item.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}${m.mature ? '<span class="age-tag">18+</span>' : ''}<span class="play-dot">▶</span></div><strong>${esc(item.title)}</strong><small>${esc(item.year || '')} ${esc(item.type || '')}</small></a>`;
   };
-  return `${heading ? `<div class="row-heading"><h2>${esc(heading)}</h2><span>${shown.length} titles</span></div>` : ''}<div class="poster-row">${shown.map(card).join('')}</div>${note}`;
+  const cards = shown.map((item, index) => `${sponsor && index > 0 && index % 8 === 0 ? renderSponsoredCard(sponsor) : ''}${card(item)}`).join('');
+  return `${heading ? `<div class="row-heading"><h2>${esc(heading)}</h2><span>${shown.length} titles</span></div>` : ''}<div class="poster-row">${cards}</div>${note}`;
 }
 
 async function home() {
@@ -202,6 +207,16 @@ async function home() {
   let searchPage = 1;
   let searchItems = [];
   let searchRequest = 0;
+  let searchAd = null;
+  api('/api/ads/search').then((ad) => {
+    if (!ad?.enabled) return;
+    searchAd = ad;
+    if (searchItems.length) {
+      const hadMore = Boolean(document.getElementById('load-more'));
+      results.innerHTML = renderCards(searchItems, `Results for “${input.value.trim()}”`, searchAd) + (hadMore ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '');
+    }
+    document.getElementById('load-more')?.addEventListener('click', () => search({ more: true }));
+  }).catch(() => {});
   async function search({ more = false } = {}) {
     const query = input.value.trim();
     const requestId = ++searchRequest;
@@ -228,7 +243,7 @@ async function home() {
       for (const item of incoming) if (!seen.has(item.id)) { searchItems.push(item); seen.add(item.id); }
       searchPage = page;
       const moreButton = data.hasMore && searchItems.length > previousCount ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '';
-      results.innerHTML = renderCards(searchItems, `Results for “${query}”`) + moreButton;
+      results.innerHTML = renderCards(searchItems, `Results for “${query}”`, searchAd) + moreButton;
       document.getElementById('load-more')?.addEventListener('click', () => search({ more: true }));
     } catch (error) {
       if (requestId !== searchRequest) return;
