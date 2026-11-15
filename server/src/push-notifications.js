@@ -8,13 +8,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import webpush from 'web-push';
 
-// Deplexo's persistent volume is mounted at /data. Override PUSH_DB_FILE only
-// when the deployment has a different persistent mount configured.
-const DB = path.resolve(
-  process.env.PUSH_DB_FILE ||
-  path.join(process.env.DATA_DIR || (process.env.NODE_ENV === 'production' ? '/data' : path.join(process.cwd(), 'data')), 'push-subscriptions.json')
-);
+// Deplexo's persistent volume is mounted at /data. In production, reject
+// app-image and temporary paths even if an old environment variable points there.
+const PRODUCTION = process.env.NODE_ENV === 'production';
+const APP_WORKING_DIR = path.resolve(process.cwd());
+const DEFAULT_DB = path.join(PRODUCTION ? '/data' : path.join(process.cwd(), 'data'), 'push-subscriptions.json');
+const REQUESTED_DB = path.resolve(process.env.PUSH_DB_FILE || path.join(process.env.DATA_DIR || path.dirname(DEFAULT_DB), 'push-subscriptions.json'));
+const isInside = (target, directory) => target === directory || target.startsWith(directory + path.sep);
+const NON_DURABLE_CONFIG = isInside(REQUESTED_DB, APP_WORKING_DIR) || isInside(REQUESTED_DB, '/tmp');
+const DB = PRODUCTION && NON_DURABLE_CONFIG ? path.resolve('/data/push-subscriptions.json') : REQUESTED_DB;
 const LEGACY_DB = path.resolve(path.join(process.cwd(), 'data', 'push-subscriptions.json'));
+
+if (PRODUCTION && NON_DURABLE_CONFIG) {
+  console.warn('[push] Ignoring PUSH_DB_FILE under the application or temporary directory; using Deplexo persistent storage at /data.');
+}
+console.info(`[push] Subscription storage configured at ${DB}`);
 
 // Environment values are often pasted with surrounding quotes or whitespace.
 // VAPID keys must be unpadded base64url strings.
