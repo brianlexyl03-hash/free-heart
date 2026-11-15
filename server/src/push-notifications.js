@@ -156,23 +156,61 @@ export function registerPushRoutes(fastify) {
   });
 }
 
+async function mapLimit(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const run = async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      try { results[index] = await worker(items[index], index); } catch (error) { results[index] = { error }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), items.length) }, run));
+  return results;
+}
+
+async function deliver(subscription, payload) {
+  try {
+    await webpush.sendNotification(subscription, payload);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, gone: error.statusCode === 404 || error.statusCode === 410, statusCode: error.statusCode || 0 };
+  }
+}
+
+async function deliverMany(items, payload) {
+  const results = await mapLimit(items, Number(process.env.PUSH_CONCURRENCY) || 32, (item) => deliver(item.subscription, payload));
+  let sent = 0, removed = 0, failed = 0;
+  const now = Date.now();
+  results.forEach((result, index) => {
+    const item = items[index];
+    if (result?.ok) { item.lastSentAt = now; sent++; }
+    else { failed++; if (result?.gone) { item.enabled = false; removed++; } }
+  });
+  return { results, sent, failed, removed, targets: items.length, concurrency: Number(process.env.PUSH_CONCURRENCY) || 32 };
+}
+
 export async function sendToAll({ title, body, url, image, tag, movieId, movieTitle }) {
   if (!vapidConfigured) return { ok: false, disabled: true, sent: 0, failed: 0, removed: 0 };
   const items = read();
-  let sent = 0, removed = 0, failed = 0;
-  for (const item of items) {
-    if (!item.enabled) continue;
-    try {
-      await webpush.sendNotification(item.subscription, JSON.stringify({ title, body, url, image, tag, movieId, movieTitle, kind: movieId ? 'movie' : 'general' }));
-      item.lastSentAt = Date.now();
-      sent++;
-    } catch (e) {
-      failed++;
-      if (e.statusCode === 404 || e.statusCode === 410) { item.enabled = false; removed++; }
-    }
-  }
+  const targets = items.filter((item) => item.enabled && item.subscription);
+  const payload = JSON.stringify({ title, body, url, image, tag, movieId, movieTitle, kind: movieId ? 'movie' : 'general' });
+  const { sent, failed, removed, targets: targetCount, concurrency } = await deliverMany(targets, payload);
   write(items);
-  return { ok: true, sent, failed, removed };
+  return { ok: true, sent, failed, removed, targets: targetCount, concurrency };
+}
+
+export async function sendToEndpoints(endpoints, { title, body, url, image, tag, movieId, movieTitle }) {
+  if (!vapidConfigured) return { ok: false, disabled: true, results: [] };
+  const wanted = new Set((endpoints || []).map(String));
+  const items = read();
+  const targets = items.filter((item) => item.enabled && item.subscription && wanted.has(item.endpoint));
+  const payload = JSON.stringify({ title, body, url, image, tag, movieId, movieTitle, kind: movieId ? 'movie' : 'general' });
+  const delivery = await deliverMany(targets, payload);
+  write(items);
+  const resultByEndpoint = new Map(targets.map((item, index) => [item.endpoint, delivery.results[index]]));
+  return { ok: true, results: [...wanted].map((endpoint) => ({ endpoint, ...(resultByEndpoint.get(endpoint) || { gone: true }) })), sent: delivery.sent, failed: delivery.failed, removed: delivery.removed };
 }
 
 // Targeted delivery for features such as followed live matches. The endpoint
@@ -187,17 +225,19 @@ export async function sendToEndpoint(endpoint, { title, body, url, image, tag, m
   const items = read();
   const item = items.find((entry) => entry.endpoint === endpoint && entry.enabled);
   if (!item) return { ok: false, gone: true };
+  const result = await deliver(item.subscription, JSON.stringify({ title, body, url, image, tag, movieId, movieTitle, kind: movieId ? 'movie' : 'general' }));
   try {
-    await webpush.sendNotification(item.subscription, JSON.stringify({ title, body, url, image, tag, movieId, movieTitle, kind: movieId ? 'movie' : 'general' }));
-    item.lastSentAt = Date.now();
-    write(items);
-    return { ok: true };
-  } catch (error) {
-    if (error.statusCode === 404 || error.statusCode === 410) {
+    if (result.ok) {
+      item.lastSentAt = Date.now();
+      write(items);
+      return { ok: true };
+    }
+    if (result.gone) {
       item.enabled = false;
       write(items);
       return { ok: false, gone: true };
     }
-    return { ok: false, error: error.statusCode || 'error' };
-  }
+    write(items);
+    return { ok: false, error: result.statusCode || 'error' };
+  } catch (error) { return { ok: false, error: error.statusCode || 'storage_error' }; }
 }

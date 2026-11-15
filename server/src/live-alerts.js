@@ -56,7 +56,7 @@ export function diff(prev, m, now = Date.now(), reminderMin = 15) {
   return out;
 }
 
-export async function pollOnce({ fetchImpl, sendTo, now = Date.now, leagues = LEAGUES } = {}) {
+export async function pollOnce({ fetchImpl, sendTo, sendMany, now = Date.now, leagues = LEAGUES } = {}) {
   if (!follows.size) return { skipped: true };
   // The configured scoreboard provider accepts one calendar date per request.
   // Live alerts only need today's fixtures; this also keeps kick-off reminders reliable.
@@ -82,10 +82,14 @@ export async function pollOnce({ fetchImpl, sendTo, now = Date.now, leagues = LE
   snap = next;
   let sent = 0;
   for (const { m, title, text } of alerts) {
-    for (const [endpoint, f] of [...follows]) {
-      if (!(f.m.has(m.id) || f.t.has(m.home.id) || f.t.has(m.away.id))) continue;
-      const r = await sendTo(endpoint, { title, body: text ? `${text}` : m.league, url: '/#/live', tag: `lv-${m.id}` });
-      if (r?.gone) follows.delete(endpoint); else if (r?.ok) sent += 1;
+    const targets = [...follows].filter(([, f]) => f.m.has(m.id) || f.t.has(m.home.id) || f.t.has(m.away.id));
+    const payload = { title, body: text ? `${text}` : m.league, url: '/#/live', tag: `lv-${m.id}` };
+    if (sendMany) {
+      const batch = await sendMany(targets.map(([endpoint]) => endpoint), payload);
+      for (const result of batch.results || []) { if (result?.gone) follows.delete(result.endpoint); else if (result?.ok) sent += 1; }
+    } else {
+      const results = await Promise.all(targets.map(([endpoint]) => sendTo(endpoint, payload)));
+      results.forEach((result, index) => { const endpoint = targets[index][0]; if (result?.gone) follows.delete(endpoint); else if (result?.ok) sent += 1; });
     }
   }
   const cutoff = now() - 14 * 86400000;
@@ -105,9 +109,10 @@ export function registerLiveAlerts(app, { hasSubscription }) {
 }
 
 let timer = null;
-export function startLiveAlerts({ sendTo, log = console } = {}) {
+export function startLiveAlerts({ sendTo, sendMany, log = console } = {}) {
   if (timer) return;
-  timer = setInterval(() => { pollOnce({ sendTo }).then((r) => { if (r.error) log.error?.('[live-alerts]', r.error); }).catch((e) => log.error?.('[live-alerts] poll failed', e?.message)); }, 20000);
+  const interval = Math.min(120000, Math.max(5000, Number(process.env.LIVE_ALERT_INTERVAL_MS) || 20000));
+  timer = setInterval(() => { pollOnce({ sendTo, sendMany }).then((r) => { if (r.error) log.error?.('[live-alerts]', r.error); }).catch((e) => log.error?.('[live-alerts] poll failed', e?.message)); }, interval);
   timer.unref?.();
-  log.log?.('[live-alerts] started');
+  log.log?.(`[live-alerts] started (${interval}ms polling)`);
 }

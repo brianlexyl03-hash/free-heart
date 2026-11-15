@@ -13,7 +13,7 @@ import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.
 import { searchArchive, getArchiveTitle, resolveArchive } from './archive-org.js';
 import { registerLiveScores } from './live-scores.js';
 import { registerLiveAlerts, startLiveAlerts } from './live-alerts.js';
-import { hasSubscription, registerPushRoutes, sendToEndpoint } from './push-notifications.js';
+import { hasSubscription, registerPushRoutes, sendToEndpoint, sendToEndpoints } from './push-notifications.js';
 import { startAutomaticPush } from './auto-push.js';
 import { getNews, getNewsArticle, getNewsSitemapItems, startNewsRefresh } from './news-service.js';
 import { nextCampaign, recordCampaignEvent } from './first-party-campaigns.js';
@@ -47,7 +47,7 @@ await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
 registerPushRoutes(app);
 registerLiveScores(app);
 registerLiveAlerts(app, { hasSubscription });
-startLiveAlerts({ sendTo: sendToEndpoint, log: app.log });
+startLiveAlerts({ sendTo: sendToEndpoint, sendMany: sendToEndpoints, log: app.log });
 
 app.get('/google30f58f739b375061.html', async (_req, reply) => {
   return reply

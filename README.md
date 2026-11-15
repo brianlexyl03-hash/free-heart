@@ -68,6 +68,8 @@ Render provides `PORT`. The gateway binds to `0.0.0.0`; the Rust sidecar is inte
 | `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY` | Optional server-managed caption provider |
 | `ADMIN_PASSWORD` | Protects owner controls |
 | `SOCIAL_WHATSAPP_URL` | Optional contact link |
+| `PUSH_CONCURRENCY` | Bounded parallel Web Push fan-out for subscribed devices |
+| `LIVE_ALERT_INTERVAL_MS` | Live-score polling interval, safely bounded to 5–120 seconds |
 | `UPSTREAM_COMMIT` | Records the pinned upstream provider revision |
 
 Keep secrets in your deployment environment. Do not commit real API keys, passwords, or private credentials.
