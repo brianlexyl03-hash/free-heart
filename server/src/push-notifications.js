@@ -1,7 +1,6 @@
 'use strict';
 
 // Free-heart Web Push notification module.
-// Install: npm i web-push
 // Required env: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT
 // Optional: PUSH_DB_FILE (default ./data/push-subscriptions.json)
 
@@ -10,18 +9,60 @@ import path from 'node:path';
 import webpush from 'web-push';
 
 const DB = process.env.PUSH_DB_FILE || path.join(process.cwd(), 'data', 'push-subscriptions.json');
-const PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
-const PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
-const SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
+
+// Environment values are often pasted with surrounding quotes or whitespace.
+// VAPID keys must be unpadded base64url strings.
+function envValue(name) {
+  return String(process.env[name] || '').trim().replace(/^["']|["']$/g, '').trim();
+}
+
+function normalizePublicKey(value) {
+  const key = value.replace(/\s+/g, '').replace(/=+$/, '');
+  if (!/^[A-Za-z0-9_-]+$/.test(key)) return '';
+  try {
+    return Buffer.from(key, 'base64url').length === 65 ? key : '';
+  } catch {
+    return '';
+  }
+}
+
+function normalizePrivateKey(value) {
+  const key = value.replace(/\s+/g, '').replace(/=+$/, '');
+  if (!/^[A-Za-z0-9_-]+$/.test(key)) return '';
+  try {
+    return Buffer.from(key, 'base64url').length === 32 ? key : '';
+  } catch {
+    return '';
+  }
+}
+
+const PUBLIC_KEY = normalizePublicKey(envValue('VAPID_PUBLIC_KEY'));
+const PRIVATE_KEY = normalizePrivateKey(envValue('VAPID_PRIVATE_KEY'));
+const SUBJECT = envValue('VAPID_SUBJECT') || 'mailto:admin@example.com';
+
+let vapidConfigured = false;
 
 function assertConfig() {
-  if (!PUBLIC_KEY || !PRIVATE_KEY) return false;
-  webpush.setVapidDetails(SUBJECT, PUBLIC_KEY, PRIVATE_KEY);
-  return true;
+  if (!PUBLIC_KEY || !PRIVATE_KEY) {
+    console.warn('[push] Web Push disabled: VAPID keys are missing or malformed. Set valid VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY environment variables.');
+    return false;
+  }
+
+  try {
+    webpush.setVapidDetails(SUBJECT, PUBLIC_KEY, PRIVATE_KEY);
+    vapidConfigured = true;
+    return true;
+  } catch (error) {
+    vapidConfigured = false;
+    console.error('[push] Web Push disabled: VAPID configuration is invalid:', error.message);
+    return false;
+  }
 }
+
 function read() {
   try { return JSON.parse(fs.readFileSync(DB, 'utf8')); } catch { return []; }
 }
+
 function write(items) {
   fs.mkdirSync(path.dirname(DB), { recursive: true });
   fs.writeFileSync(DB, JSON.stringify(items, null, 2));
@@ -29,6 +70,7 @@ function write(items) {
 
 export function registerPushRoutes(fastify) {
   const enabled = assertConfig();
+
   fastify.get('/api/push/public-key', async (_req, reply) => {
     if (!enabled) return reply.code(503).send({ error: 'push_not_configured', message: 'Web Push is not configured on this service.' });
     return { publicKey: PUBLIC_KEY };
@@ -65,7 +107,7 @@ export function registerPushRoutes(fastify) {
 }
 
 export async function sendToAll({ title, body, url, image, tag, movieId, movieTitle }) {
-  if (!PUBLIC_KEY || !PRIVATE_KEY) return { ok: false, disabled: true, sent: 0, failed: 0, removed: 0 };
+  if (!vapidConfigured) return { ok: false, disabled: true, sent: 0, failed: 0, removed: 0 };
   const items = read();
   let sent = 0, removed = 0, failed = 0;
   for (const item of items) {
@@ -91,7 +133,7 @@ export function hasSubscription(endpoint) {
 }
 
 export async function sendToEndpoint(endpoint, { title, body, url, image, tag, movieId, movieTitle }) {
-  if (!PUBLIC_KEY || !PRIVATE_KEY) return { ok: false, disabled: true };
+  if (!vapidConfigured) return { ok: false, disabled: true };
   const items = read();
   const item = items.find((entry) => entry.endpoint === endpoint && entry.enabled);
   if (!item) return { ok: false, gone: true };
