@@ -50,9 +50,44 @@ function normalizePrivateKey(value) {
   }
 }
 
-const PUBLIC_KEY = normalizePublicKey(envValue('VAPID_PUBLIC_KEY'));
-const PRIVATE_KEY = normalizePrivateKey(envValue('VAPID_PRIVATE_KEY'));
-const SUBJECT = envValue('VAPID_SUBJECT') || 'mailto:admin@example.com';
+const KEY_FILE = path.join(PRODUCTION ? '/data' : path.join(process.cwd(), 'data'), 'vapid-keys.json');
+
+function loadOrCreateVapidKeys() {
+  const configuredPublic = normalizePublicKey(envValue('VAPID_PUBLIC_KEY'));
+  const configuredPrivate = normalizePrivateKey(envValue('VAPID_PRIVATE_KEY'));
+  if (configuredPublic && configuredPrivate) return { publicKey: configuredPublic, privateKey: configuredPrivate };
+
+  try {
+    const saved = JSON.parse(fs.readFileSync(KEY_FILE, 'utf8'));
+    const publicKey = normalizePublicKey(String(saved.publicKey || ''));
+    const privateKey = normalizePrivateKey(String(saved.privateKey || ''));
+    if (publicKey && privateKey) {
+      console.info('[push] Loaded persistent VAPID keys from durable storage.');
+      return { publicKey, privateKey };
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn('[push] Stored VAPID keys could not be read:', error.message);
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(KEY_FILE), { recursive: true });
+    const generated = webpush.generateVAPIDKeys();
+    const temporaryFile = `${KEY_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(temporaryFile, JSON.stringify(generated), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temporaryFile, KEY_FILE);
+    console.info('[push] Generated and persisted a new VAPID key pair.');
+    return {
+      publicKey: normalizePublicKey(generated.publicKey),
+      privateKey: normalizePrivateKey(generated.privateKey),
+    };
+  } catch (error) {
+    console.error('[push] Cannot create persistent VAPID keys; Web Push remains disabled:', error.message);
+    return { publicKey: '', privateKey: '' };
+  }
+}
+
+const { publicKey: PUBLIC_KEY, privateKey: PRIVATE_KEY } = loadOrCreateVapidKeys();
+const SUBJECT = envValue('VAPID_SUBJECT') || 'mailto:admin@free-heart.app';
 
 let vapidConfigured = false;
 
