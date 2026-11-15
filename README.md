@@ -51,7 +51,7 @@ The repository includes a Dockerfile and a Render Blueprint.
 1. Create a Render Blueprint from this repository.
 2. Set `PUBLIC_SITE_URL` to the deployed HTTPS address.
 3. Add only the environment variables required by the features you enable.
-4. Check `/api/health`, `/robots.txt`, and `/sitemap.xml` after deployment.
+4. Check `/api/health`, `/robots.txt`, `/sitemap.xml`, and `/news-sitemap.xml` after deployment.
 
 Render provides `PORT`. The gateway binds to `0.0.0.0`; the Rust sidecar is intended to remain private within the deployment.
 
@@ -60,6 +60,8 @@ Render provides `PORT`. The gateway binds to `0.0.0.0`; the Rust sidecar is inte
 | Variable | Purpose |
 |---|---|
 | `PUBLIC_SITE_URL` | Canonical URLs, Open Graph metadata, robots, and sitemap |
+| `NEWS_DB_FILE` | Persistent store for recent attributed news items |
+| `NEWS_RSS_FEEDS` | Optional permissioned RSS/Atom feeds for corroboration and official updates |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional Web Push delivery |
 | `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY` | Optional server-managed caption provider |
 | `ADMIN_PASSWORD` | Protects owner controls |

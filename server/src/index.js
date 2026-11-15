@@ -15,6 +15,7 @@ import { registerLiveScores } from './live-scores.js';
 import { registerLiveAlerts, startLiveAlerts } from './live-alerts.js';
 import { hasSubscription, registerPushRoutes, sendToEndpoint } from './push-notifications.js';
 import { startAutomaticPush } from './auto-push.js';
+import { getNews, getNewsArticle, getNewsSitemapItems, startNewsRefresh } from './news-service.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = Fastify({
@@ -664,39 +665,39 @@ app.get('/api/clip/:token', { config: { rateLimit: { max: 20, timeWindow: '1 min
   reply.header('content-type', 'video/mp4'); reply.header('content-disposition', 'attachment; filename="clip.mp4"'); reply.header('cache-control', 'no-store');
   return reply.send(ff.stdout);
 });
-const NEWS_FEEDS = { football: 'football', 'premier-league': 'football/premier-league', 'champions-league': 'football/champions-league', european: 'football/european', womens: 'football/womens' };
-const newsCache = new Map();
-function xmlText(v) { return String(v || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim(); }
-async function footballNews(feed) {
-  const key = NEWS_FEEDS[feed] ? feed : 'football';
-  const hit = newsCache.get(key); if (hit && hit.t > Date.now() - 300000) return hit.v;
-  const r = await fetch(`https://feeds.bbci.co.uk/sport/${NEWS_FEEDS[key]}/rss.xml`, { headers: { 'user-agent': 'Mozilla/5.0 free-heart-news' }, signal: AbortSignal.timeout(8000) });
-  if (!r.ok) throw new Error('news source returned ' + r.status);
-  const xml = await r.text();
-  const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, 30).map((m) => {
-    const pick = (t) => (m[1].match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`)) || [])[1];
-    const img = (m[1].match(/<media:thumbnail[^>]*url="([^"]+)"/) || [])[1] || '';
-    return { title: xmlText(pick('title')), summary: xmlText(pick('description')), link: xmlText(pick('link')), published: xmlText(pick('pubDate')), image: img };
-  }).filter((i) => i.title && /^https:\/\//.test(i.link));
-  const v = { source: 'BBC Sport', feed: key, items };
-  newsCache.set(key, { t: Date.now(), v }); return v;
+const NEWS_FEEDS = { football: 'football', 'premier-league': 'premier-league', 'champions-league': 'champions-league', european: 'european', womens: 'womens' };
+async function footballNews(feed) { return getNews({ category: NEWS_FEEDS[feed] ? feed : 'football', limit: 40 }); }
+function newsStatusLabel(item) { return item.verification === 'official' ? 'Official source' : item.verification === 'corroborated' ? `${item.corroborationCount} sources` : 'Reported · awaiting corroboration'; }
+function newsCard(item) {
+  return `<a href="/news/item/${encodeURIComponent(item.id)}" style="display:flex;gap:12px;margin:12px 0;padding:10px;border:1px solid #24242c;border-radius:12px;text-decoration:none;color:inherit">${item.image ? `<img src="${htmlEscape(item.image)}" alt="" width="120" height="68" loading="lazy" style="object-fit:cover;border-radius:8px">` : ''}<span><b>${htmlEscape(item.title)}</b><br><small>${htmlEscape(newsStatusLabel(item))} · ${htmlEscape(item.source)}</small><br><small>${htmlEscape(item.summary)}</small></span></a>`;
 }
 app.get('/api/football-news', async (req, reply) => {
-  try { return await footballNews(String(req.query?.feed || 'football')); } catch (err) { return reply.code(502).send({ error: 'news_unavailable', message: 'Football news is unavailable right now. Try again shortly.' }); }
+  try { return await footballNews(String(req.query?.feed || 'football')); } catch { return reply.code(502).send({ error: 'news_unavailable', message: 'News sources are unavailable right now. Try again shortly.' }); }
+});
+app.get('/news/item/:id', async (req, reply) => {
+  const item = getNewsArticle(req.params.id);
+  if (!item) return reply.code(404).type('text/html').send(await seoIndex({ title: 'News story not found — free❤️‍🔥', description: 'This news story is no longer in the verified news index.', pathName: `/news/item/${encodeURIComponent(req.params.id)}`, body: '<section class="seo-intro"><h1>News story not found</h1><p>Return to the latest news.</p><p><a href="/news">Latest news</a></p></section>' }));
+  const description = String(item.summary || `Latest ${item.category} report from ${item.source}.`).slice(0, 155);
+  const sourceLinks = item.sources.map((source) => `<li><a href="${htmlEscape(source.link)}" rel="nofollow noopener noreferrer">${htmlEscape(source.name)}</a></li>`).join('');
+  const body = `<article class="seo-intro"><span class="eyebrow">${htmlEscape(newsStatusLabel(item))}</span><h1>${htmlEscape(item.title)}</h1>${item.image ? `<img src="${htmlEscape(item.image)}" alt="" width="640" height="360" style="max-width:100%;height:auto;border-radius:14px;object-fit:cover">` : ''}<p>${htmlEscape(description)}</p><p><small>Published ${htmlEscape(item.publishedAt)} · This page summarizes the headline and links to the original reporting. It does not reproduce the source article.</small></p><h2>Sources</h2><ul>${sourceLinks}</ul><p><a href="/news?feed=${encodeURIComponent(item.category)}">More ${htmlEscape(item.category)} news</a></p></article>`;
+  const schema = { '@context': 'https://schema.org', '@type': 'NewsArticle', headline: item.title, image: item.image ? [item.image] : undefined, datePublished: item.publishedAt, dateModified: item.fetchedAt, author: { '@type': 'Organization', name: item.source }, publisher: { '@type': 'Organization', name: 'free❤️‍🔥' }, mainEntityOfPage: `${PUBLIC_SITE_URL || ''}/news/item/${encodeURIComponent(item.id)}` };
+  return reply.type('text/html').send(await seoIndex({ title: `${item.title} — free❤️‍🔥`, description, pathName: `/news/item/${encodeURIComponent(item.id)}`, body, schema }));
 });
 app.get('/news', async (req, reply) => {
-  const feed = String(req.query?.feed || 'football');
-  let data; try { data = await footballNews(feed); } catch { data = { source: 'BBC Sport', feed, items: [] }; }
-  const tabs = Object.keys(NEWS_FEEDS).map((k) => `<a href="/news?feed=${k}" style="padding:6px 12px;border-radius:99px;border:1px solid #888;text-decoration:none;color:inherit;${k === data.feed ? 'background:#d6303e;color:#fff;border-color:#d6303e;' : ''}">${k}</a>`).join(' ');
-  const cards = data.items.map((i) => `<a href="${htmlEscape(i.link)}" target="_blank" rel="noopener noreferrer" style="display:flex;gap:12px;margin:12px 0;text-decoration:none;color:inherit">${i.image ? `<img src="${htmlEscape(i.image)}" alt="" width="120" height="68" style="object-fit:cover;border-radius:8px">` : ''}<span><b>${htmlEscape(i.title)}</b><br><small>${htmlEscape(i.summary)}</small></span></a>`).join('') || '<p>News is unavailable right now. Try again shortly.</p>';
-  reply.type('text/html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Football news | free-heart</title><body style="font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:16px;line-height:1.35"><h1>Football news</h1><p style="display:flex;flex-wrap:wrap;gap:8px">${tabs}</p>${cards}<p><small>Headlines from ${htmlEscape(data.source)}. Tap one to read the full story on their site.</small></p><p><a href="/">Back to free-heart</a></p></body>`);
+  const feed = NEWS_FEEDS[req.query?.feed] ? String(req.query.feed) : 'football';
+  let data; try { data = await footballNews(feed); } catch { data = { source: 'configured RSS sources', feed, items: [] }; }
+  const tabs = Object.keys(NEWS_FEEDS).map((key) => `<a href="/news?feed=${key}" style="padding:6px 12px;border-radius:99px;border:1px solid #888;text-decoration:none;color:inherit;${key === feed ? 'background:#d6303e;color:#fff;border-color:#d6303e;' : ''}">${key}</a>`).join(' ');
+  const cards = data.items.map(newsCard).join('') || '<p>News is unavailable right now. Try again shortly.</p>';
+  const body = `<section class="seo-intro"><span class="eyebrow">Fast, attributed news</span><h1>Latest ${htmlEscape(feed)} news</h1><p>Headlines are collected from permitted RSS sources, deduplicated, and marked as reported, corroborated, or official. Read the original reporting through the source links.</p><p style="display:flex;flex-wrap:wrap;gap:8px">${tabs}</p>${cards}<p><small>Sources: ${htmlEscape(data.source)}. Last refreshed ${htmlEscape(data.updatedAt)}.</small></p></section>`;
+  return reply.type('text/html').send(await seoIndex({ title: `Latest ${feed} news — free❤️‍🔥`, description: `Fast, attributed ${feed} news with source links and corroboration labels.`, pathName: `/news?feed=${encodeURIComponent(feed)}`, body }));
 });
 const lastErrors = [];
 app.get('/api/last-error', async () => ({ errors: lastErrors }));
 function htmlEscape(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-async function seoIndex({ title, description, pathName = '/', body } = {}) {
+function xmlEscape(value) { return htmlEscape(value); }
+async function seoIndex({ title, description, pathName = '/', body, schema } = {}) {
   let html = await readFile(path.resolve(here, '../../web/index.html'), 'utf8');
   if (PUBLIC_SITE_URL) html = html.replaceAll('__PUBLIC_SITE_URL__', PUBLIC_SITE_URL);
   else html = html.replace(/<meta property="og:url"[^>]*>\n?|<meta property="og:image"[^>]*>\n?|<meta name="twitter:image"[^>]*>\n?|<link rel="canonical"[^>]*>\n?|<script type="application\/ld\+json">[\s\S]*?<\/script>\n?/g, '');
@@ -704,6 +705,7 @@ async function seoIndex({ title, description, pathName = '/', body } = {}) {
   if (description) html = html.replace(/<meta name="description" content="[^"]*">/, `<meta name="description" content="${htmlEscape(description)}">`);
   if (PUBLIC_SITE_URL) html = html.replace(/<meta property="og:url" content="[^"]*">/, `<meta property="og:url" content="${PUBLIC_SITE_URL}${pathName}">`).replace(/<link rel="canonical" href="[^"]*">/, `<link rel="canonical" href="${PUBLIC_SITE_URL}${pathName}">`);
   if (body) html = html.replace(/<main id="app">[\s\S]*?<\/main>/, `<main id="app">${body}</main>`);
+  if (schema && PUBLIC_SITE_URL) html = html.replace('</head>', `<script type="application/ld+json">${JSON.stringify(schema).replace(/</g, '\\u003c')}</script></head>`);
   return html;
 }
 
@@ -715,19 +717,34 @@ app.get('/title/:id', async (req, reply) => {
     const title = String(data.title || 'Watch this title');
     const description = String(data.overview || `Watch ${title} online with free❤️‍🔥.`).slice(0, 155);
     const id = encodeURIComponent(req.params.id);
-    const body = `<article class="seo-intro"><span class="eyebrow">${htmlEscape(data.type || 'Title')}</span><h1>${htmlEscape(title)}</h1><p>${htmlEscape(description)}</p><p><a href="/#/title/${id}">Open ${htmlEscape(title)} in free❤️‍🔥</a></p></article>`;
-    const html = await seoIndex({ title: `${title} — free❤️‍🔥`, description, pathName: `/title/${id}`, body });
+    const poster = [data.poster, data.posterUrl, data.image, data.backdrop].find((value) => /^https:\/\//i.test(String(value || '')));
+    const body = `<article class="seo-intro"><span class="eyebrow">${htmlEscape(data.type || 'Title')}</span><h1>${htmlEscape(title)}</h1>${poster ? `<img src="${htmlEscape(poster)}" alt="${htmlEscape(title)} poster" width="342" height="513" style="max-width:100%;height:auto;border-radius:14px;object-fit:cover">` : ''}<p>${htmlEscape(description)}</p><p><a href="/#/title/${id}">Open ${htmlEscape(title)} in free❤️‍🔥</a></p></article>`;
+    const schema = { '@context': 'https://schema.org', '@type': String(data.type || '').toLowerCase().includes('series') ? 'TVSeries' : 'Movie', name: title, description, image: poster ? [poster] : undefined, url: `${PUBLIC_SITE_URL || ''}/title/${id}` };
+    const html = await seoIndex({ title: `${title} — free❤️‍🔥`, description, pathName: `/title/${id}`, body, schema });
     return reply.type('text/html').send(html);
   } catch { return reply.code(404).type('text/html').send(await seoIndex({ title: 'Title not found — free❤️‍🔥', description: 'This title could not be found.', pathName: `/title/${encodeURIComponent(req.params.id)}`, body: '<section class="seo-intro"><h1>Title not found</h1><p>Try another search.</p><p><a href="/">Return to free❤️‍🔥</a></p></section>' })); }
 });
 app.get('/robots.txt', async (_req, reply) => {
-  const sitemap = PUBLIC_SITE_URL ? `\nSitemap: ${PUBLIC_SITE_URL}/sitemap.xml` : '';
+  const sitemap = PUBLIC_SITE_URL ? `\nSitemap: ${PUBLIC_SITE_URL}/sitemap.xml\nSitemap: ${PUBLIC_SITE_URL}/news-sitemap.xml` : '';
   return reply.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\nDisallow: /downloads${sitemap}\n`);
 });
+async function publicMovieUrls() {
+  const responses = await Promise.allSettled(['popular', 'trending', 'latest movies'].map((query) => core.search(query, 1)));
+  const seen = new Set();
+  return responses.flatMap((response) => response.status === 'fulfilled' ? response.value.results || [] : []).filter((item) => item?.id && !seen.has(String(item.id)) && seen.add(String(item.id))).slice(0, 500).map((item) => `/title/${encodeURIComponent(item.id)}`);
+}
+app.get('/news-sitemap.xml', async (_req, reply) => {
+  if (!PUBLIC_SITE_URL) return reply.code(503).type('text/plain').send('Set PUBLIC_SITE_URL before exposing a news sitemap.');
+  try { await footballNews('football'); } catch { /* serve the last persisted set */ }
+  const urls = getNewsSitemapItems().slice(0, 1000).map((item) => `<url><loc>${xmlEscape(`${PUBLIC_SITE_URL}/news/item/${encodeURIComponent(item.id)}`)}</loc><news:news><news:publication><news:name>free❤️‍🔥</news:name><news:language>en</news:language></news:publication><news:publication_date>${xmlEscape(item.publishedAt)}</news:publication_date><news:title>${xmlEscape(item.title)}</news:title></news:news></url>`).join('');
+  return reply.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">${urls}</urlset>`);
+});
 app.get('/sitemap.xml', async (_req, reply) => {
-  if (!PUBLIC_SITE_URL) return reply.code(503).type('text/plain').send('Set PUBLIC_SITE_URL before exposing a sitemap to crawlers.');
-  const urls = ['/', '/about'];
-  const xml = `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map((u) => `<url><loc>${PUBLIC_SITE_URL}${u}</loc><changefreq>${u === '/' ? 'daily' : 'monthly'}</changefreq></url>`).join('')}</urlset>`;
+  if (!PUBLIC_SITE_URL) return reply.code(503).type('text/plain').send('Set PUBLIC_SITE_URL before exposing a sitemap.');
+  let movieUrls = []; try { movieUrls = await publicMovieUrls(); } catch { /* keep static URLs available */ }
+  const newsUrls = getNewsSitemapItems().map((item) => `/news/item/${encodeURIComponent(item.id)}`);
+  const urls = ['/', '/about', '/news', ...movieUrls, ...newsUrls].filter((url, index, list) => list.indexOf(url) === index);
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map((u) => `<url><loc>${xmlEscape(`${PUBLIC_SITE_URL}${u}`)}</loc><changefreq>${u === '/' ? 'daily' : u.startsWith('/news') ? 'hourly' : 'weekly'}</changefreq></url>`).join('')}</urlset>`;
   return reply.type('application/xml').send(xml);
 });
 
@@ -737,7 +754,7 @@ app.server.keepAliveTimeout = 120000;
 app.server.headersTimeout = 125000;
 const port = Number(process.env.PORT || 3000);
 startAutomaticPush();
-
+startNewsRefresh({ log: app.log });
 await app.listen({ port, host: process.env.HOST || '0.0.0.0' });
 
 
