@@ -729,7 +729,23 @@ async fn resolve(
             kind: "provider_error",
             message: "No configured provider returned a playable stream for this title".to_string(),
         })?,
-        Err(error) => return Err(ApiError::provider(error)),
+        // A failed primary source must not strand a title. Try the other
+        // configured, title-matched providers before returning an error,
+        // regardless of which provider supplied the catalogue result.
+        Err(primary_error) => fallback_movie_releases(
+            &state.service,
+            &details,
+            season,
+            episode,
+        )
+        .await
+        .map_err(|fallback_error| ApiError {
+            status: StatusCode::BAD_GATEWAY,
+            kind: "provider_error",
+            message: format!(
+                "The selected source failed ({primary_error}); alternate providers also failed ({fallback_error})"
+            ),
+        })?,
         Ok(releases) => (provider, subject_id.clone(), releases),
     };
     let mut resolutions: Vec<u32> = releases
