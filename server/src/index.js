@@ -266,9 +266,10 @@ app.get('/api/siteguard/status', async () => ({
 
 app.get('/api/search', async (req) => {
   const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
-  const [coreResult, archiveResult] = await Promise.allSettled([core.search(q, page), searchArchive(q, page)]);
+  const [coreResult, archiveResult, newsResult] = await Promise.allSettled([core.search(q, page), searchArchive(q, page), getNews({ category: 'football', limit: 60 })]);
   const archiveItems = archiveResult.status === 'fulfilled' ? archiveResult.value : [];
-  if (coreResult.status === 'rejected' && !archiveItems.length) throw coreResult.reason;
+  const freshNews = newsResult.status === 'fulfilled' ? newsResult.value.items : [];
+  if (coreResult.status === 'rejected' && !archiveItems.length && !freshNews.length) throw coreResult.reason;
   const base = coreResult.status === 'fulfilled' ? coreResult.value : { results: [], page, hasMore: false };
   const seen = new Set();
   const results = [...(base.results || []), ...archiveItems].filter((item) => {
@@ -276,7 +277,17 @@ app.get('/api/search', async (req) => {
     seen.add(item.id);
     return true;
   });
-  return { ...base, results, page, hasMore: Boolean(base.hasMore || archiveItems.length >= 20) };
+  const queryWords = q.toLowerCase().split(/\s+/).filter((word) => word.length > 2);
+  const news = freshNews.filter((item) => queryWords.some((word) => `${item.title} ${item.summary}`.toLowerCase().includes(word))).slice(0, 10);
+  const related = [...new Set([`${q} news`, `${q} latest`, `${q} profile`, `${q} official website`])];
+  const searchUrl = (site, extra = '') => `https://www.google.com/search?q=${encodeURIComponent(`${q}${extra} ${site}`.trim())}`;
+  const web = [
+    { kind: 'Web', source: 'Google', title: `Search the web for ${q}`, url: searchUrl('') , description: 'Open broader web results for this query.' },
+    { kind: 'Knowledge', source: 'Wikipedia', title: `${q} — Wikipedia`, url: `https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(q)}`, description: 'Look for an encyclopedia profile and background.' },
+    { kind: 'Social', source: 'Instagram', title: `${q} on Instagram`, url: searchUrl('Instagram'), description: 'Search Instagram results; verify the account before treating it as official.' },
+    { kind: 'Social', source: 'X', title: `${q} on X`, url: searchUrl('X'), description: 'Search public posts and profiles on X.' },
+  ];
+  return { ...base, results, page, hasMore: Boolean(base.hasMore || archiveItems.length >= 20), news, related, web };
 });
 
 function publicHttpsUrl(value) {

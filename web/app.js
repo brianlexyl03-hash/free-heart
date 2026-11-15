@@ -211,24 +211,34 @@ function renderCards(items, heading = '', sponsor = null) {
   const cards = shown.map((item, index) => `${sponsor && index > 0 && index % 8 === 0 ? renderSponsoredCard(sponsor) : ''}${card(item)}`).join('');
   return `${heading ? `<div class="row-heading"><h2>${esc(heading)}</h2><span>${shown.length} titles</span></div>` : ''}<div class="poster-row">${cards}</div>${note}`;
 }
+function renderUniversalResults(data, query) {
+  const related = (data.related || []).map((term) => `<button class="related-search" data-query="${esc(term)}">${esc(term)} <span>⌕</span></button>`).join('');
+  const news = (data.news || []).map((item) => `<a class="search-news-result" href="#/news/${encodeURIComponent(item.id)}">${item.image ? `<img loading="lazy" src="${esc(item.image)}" alt="">` : '<span class="search-news-placeholder"></span>'}<span><small>${esc(item.source || 'News')} · ${esc(newsDate(item.publishedAt))}</small><strong>${esc(item.title)}</strong><em>${esc(item.summary || '')}</em></span></a>`).join('');
+  const web = (data.web || []).map((item) => `<a class="web-search-result" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer"><small>${esc(item.source)} · ${esc(item.kind)}</small><strong>${esc(item.title)}</strong><em>${esc(item.description)}</em><span>${esc(item.url)}</span></a>`).join('');
+  return `<section class="universal-search"><div class="related-searches"><h3>Related searches</h3><div>${related}</div></div>${news ? `<div class="search-result-group"><div class="row-heading"><h2>Latest news about “${esc(query)}”</h2><span>${data.news.length} stories</span></div><div class="search-news-list">${news}</div></div>` : ''}<div class="search-result-group"><div class="row-heading"><h2>Web results</h2><span>Search shortcuts</span></div><div class="web-search-list">${web}</div></div></section>`;
+}
 
 async function home() {
-  app.innerHTML = `<section class="hero"><div class="hero-copy"><span class="eyebrow">Your next obsession</span><h1>Watch something<br><em>unforgettable.</em></h1><p>Search a world of cinema and series, then press play.</p><div class="search-shell"><span>⌕</span><input id="q" type="search" placeholder="Search movies, shows, anime…" autocomplete="off"></div><button id="notify-me" class="ghost notify-button">⌁ Notify me of picks</button><button id="mature-mode" class="ghost notify-button"></button></div></section><section id="results" class="content-section"><div class="row-heading"><h2>Find your next story</h2><span>Search to explore</span></div><div class="notice">Start typing a title above.</div></section>`;
+  app.innerHTML = `<section class="hero"><div class="hero-copy"><span class="eyebrow">Your next obsession</span><h1>Watch something<br><em>unforgettable.</em></h1><p>Search movies, live news, people, and the web.</p><div class="search-shell"><span>⌕</span><input id="q" type="search" placeholder="Search Cristiano Ronaldo, Inception…" autocomplete="off"></div><button id="notify-me" class="ghost notify-button">⌁ Notify me of picks</button><button id="mature-mode" class="ghost notify-button"></button></div></section><section id="results" class="content-section"><div class="row-heading"><h2>Find your next story</h2><span>Search movies, news, and web results</span></div><div class="notice">Start typing a person, headline, movie, or team.</div></section>`;
   const input = document.getElementById('q');
   const results = document.getElementById('results');
   document.getElementById('notify-me').onclick = async (event) => { event.currentTarget.textContent = (await enableNotifications()) ? '✓ Picks enabled' : 'Notifications blocked'; };
   let timer;
   let searchPage = 1;
   let searchItems = [];
+  let searchData = null;
   let searchRequest = 0;
   let searchAd = null;
+  const wireRelated = () => document.querySelectorAll('.related-search').forEach((button) => { button.onclick = () => { input.value = button.dataset.query || ''; search(); }; });
   api('/api/ads/search').then((ad) => {
     if (!ad?.enabled) return;
     searchAd = ad;
     if (searchItems.length) {
       const hadMore = Boolean(document.getElementById('load-more'));
-      results.innerHTML = renderCards(searchItems, `Results for “${input.value.trim()}”`, searchAd) + (hadMore ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '');
+      const query = input.value.trim();
+      results.innerHTML = (searchData ? renderUniversalResults(searchData, query) : '') + renderCards(searchItems, `Movies & series for “${query}”`, searchAd) + (hadMore ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '');
       wireSponsoredTracking();
+      wireRelated();
     }
     document.getElementById('load-more')?.addEventListener('click', () => search({ more: true }));
   }).catch(() => {});
@@ -236,7 +246,7 @@ async function home() {
     const query = input.value.trim();
     const requestId = ++searchRequest;
     if (!query) {
-      searchPage = 1; searchItems = [];
+      searchPage = 1; searchItems = []; searchData = null;
       results.innerHTML = '<div class="row-heading"><h2>Find your next story</h2><span>Search to explore</span></div><div class="notice">Start typing a title above.</div>';
       return;
     }
@@ -252,15 +262,17 @@ async function home() {
       rememberTaste(query);
       const data = await api(`/api/search?q=${encodeURIComponent(query)}&page=${page}`);
       if (requestId !== searchRequest || input.value.trim() !== query) return;
+      searchData = data;
       const incoming = Array.isArray(data.results) ? data.results : [];
       const previousCount = searchItems.length;
       const seen = new Set(searchItems.map((item) => item.id));
       for (const item of incoming) if (!seen.has(item.id)) { searchItems.push(item); seen.add(item.id); }
       searchPage = page;
       const moreButton = data.hasMore && searchItems.length > previousCount ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '';
-      results.innerHTML = renderCards(searchItems, `Results for “${query}”`, searchAd) + moreButton;
+      results.innerHTML = renderUniversalResults(data, query) + renderCards(searchItems, `Movies & series for “${query}”`, searchAd) + moreButton;
       wireSponsoredTracking();
       document.getElementById('load-more')?.addEventListener('click', () => search({ more: true }));
+      wireRelated();
     } catch (error) {
       if (requestId !== searchRequest) return;
       if (more) {
