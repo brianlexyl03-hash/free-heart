@@ -8,7 +8,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import webpush from 'web-push';
 
-const DB = process.env.PUSH_DB_FILE || path.join(process.cwd(), 'data', 'push-subscriptions.json');
+const PRIMARY_DB = path.resolve(process.env.PUSH_DB_FILE || path.join(process.cwd(), 'data', 'push-subscriptions.json'));
+const FALLBACK_DB = path.join('/tmp', 'free-heart-push-subscriptions.json');
+let activeDb = PRIMARY_DB;
+let fallbackWarningLogged = false;
 
 // Environment values are often pasted with surrounding quotes or whitespace.
 // VAPID keys must be unpadded base64url strings.
@@ -60,12 +63,37 @@ function assertConfig() {
 }
 
 function read() {
-  try { return JSON.parse(fs.readFileSync(DB, 'utf8')); } catch { return []; }
+  for (const candidate of [activeDb, PRIMARY_DB, FALLBACK_DB]) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      if (Array.isArray(parsed)) {
+        activeDb = candidate;
+        return parsed;
+      }
+    } catch {}
+  }
+  return [];
 }
 
 function write(items) {
-  fs.mkdirSync(path.dirname(DB), { recursive: true });
-  fs.writeFileSync(DB, JSON.stringify(items, null, 2));
+  const payload = JSON.stringify(items, null, 2);
+  const candidates = [...new Set([activeDb, PRIMARY_DB, FALLBACK_DB])];
+  let lastError;
+  for (const candidate of candidates) {
+    try {
+      fs.mkdirSync(path.dirname(candidate), { recursive: true });
+      fs.writeFileSync(candidate, payload, { mode: 0o600 });
+      activeDb = candidate;
+      if (candidate === FALLBACK_DB && !fallbackWarningLogged) {
+        fallbackWarningLogged = true;
+        console.warn('[push] Primary subscription store unavailable; using temporary fallback storage. Configure PUSH_DB_FILE to a writable persistent path to retain subscriptions across restarts.');
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  console.error('[push] Could not save subscriptions to primary or fallback storage:', lastError?.message || 'unknown filesystem error');
 }
 
 export function registerPushRoutes(fastify) {
