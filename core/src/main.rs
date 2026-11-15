@@ -363,7 +363,14 @@ async fn fallback_movie_releases(
     season: usize,
     episode: usize,
 ) -> Result<(ProviderKind, String, Vec<Release>), ProviderError> {
-    let mut providers = vec![ProviderKind::FourKHdHub, ProviderKind::Dramachi];
+    let mut providers = Vec::new();
+    // WeFeed Short IDs are backed by MovieBox metadata. If the short-drama
+    // endpoint has no current episode URL, retry the matching title through
+    // the ordinary MovieBox episode resolver before moving to other providers.
+    if details.id.value.starts_with("wefeedshort~") {
+        providers.push(ProviderKind::MovieBox);
+    }
+    providers.extend([ProviderKind::FourKHdHub, ProviderKind::Dramachi]);
     if addon_sources::enabled() {
         providers.push(ProviderKind::Addons);
     }
