@@ -49,12 +49,6 @@ registerLiveScores(app);
 registerLiveAlerts(app, { hasSubscription });
 startLiveAlerts({ sendTo: sendToEndpoint, sendMany: sendToEndpoints, log: app.log });
 
-app.get('/google30f58f739b375061.html', async (_req, reply) => {
-  return reply
-    .type('text/html; charset=utf-8')
-    .send('google-site-verification: google30f58f739b375061.html');
-});
-
 async function startAutomaticPushRecommendations() {
   try {
     const { sendToAll } = await import('./push-notifications.js');
@@ -783,7 +777,10 @@ app.get('/sitemap.xml', async (_req, reply) => {
   return reply.type('application/xml').send(xml);
 });
 
-await app.register(fastifyStatic, { root: path.resolve(here, '../../web') });
+// The SPA only needs exact static assets because application navigation uses
+// hash routes. Disable the static plugin's catch-all so it cannot intercept
+// server-rendered /news/item/* and /title/* pages before their SEO handlers.
+await app.register(fastifyStatic, { root: path.resolve(here, '../../web'), wildcard: false, index: false });
 
 app.server.keepAliveTimeout = 120000;
 app.server.headersTimeout = 125000;
