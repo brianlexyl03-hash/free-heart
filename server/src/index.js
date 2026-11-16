@@ -16,7 +16,7 @@ import { registerLiveScores } from './live-scores.js';
 import { registerLiveAlerts, startLiveAlerts } from './live-alerts.js';
 import { hasSubscription, registerPushRoutes, sendToEndpoint, sendToEndpoints } from './push-notifications.js';
 import { startAutomaticPush } from './auto-push.js';
-import { getNews, getNewsArticle, getNewsSitemapItems, startNewsRefresh } from './news-service.js';
+import { getNews, getNewsArticle, getNewsSitemapItems, rankNewsForQuery, startNewsRefresh } from './news-service.js';
 import { nextCampaign, recordCampaignEvent } from './first-party-campaigns.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -274,7 +274,7 @@ app.get('/api/search', async (req) => {
     return true;
   });
   const queryWords = q.toLowerCase().split(/\s+/).filter((word) => word.length > 2);
-  const news = freshNews.filter((item) => queryWords.some((word) => `${item.title} ${item.summary}`.toLowerCase().includes(word))).slice(0, 10);
+  const news = rankNewsForQuery(freshNews.filter((item) => queryWords.some((word) => `${item.title} ${item.summary}`.toLowerCase().includes(word))), q).slice(0, 10);
   const related = [...new Set([`${q} news`, `${q} latest`, `${q} profile`, `${q} official website`])];
   const searchUrl = (site, extra = '') => `https://www.google.com/search?q=${encodeURIComponent(`${q}${extra} ${site}`.trim())}`;
   const web = [

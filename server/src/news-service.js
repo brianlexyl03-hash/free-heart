@@ -25,6 +25,27 @@ const DEFAULT_FEEDS = [
   { name: 'BBC Sport', url: 'https://feeds.bbci.co.uk/sport/football/champions-league/rss.xml', category: 'champions-league', official: false },
   { name: 'BBC Sport', url: 'https://feeds.bbci.co.uk/sport/football/european/rss.xml', category: 'european', official: false },
   { name: 'BBC Sport', url: 'https://feeds.bbci.co.uk/sport/football/womens/rss.xml', category: 'womens', official: false },
+  { name: 'Sky Sports', url: 'https://www.skysports.com/rss/12040', category: 'football', official: false },
+  { name: 'ESPN Soccer', url: 'https://www.espn.com/espn/rss/soccer/news', category: 'football', official: false },
+  { name: 'The Guardian Football', url: 'https://www.theguardian.com/football/rss', category: 'football', official: false },
+  { name: 'CBS Sports Soccer', url: 'https://www.cbssports.com/rss/headlines/soccer/', category: 'football', official: false },
+  { name: 'Yahoo Soccer', url: 'https://sports.yahoo.com/soccer/rss/', category: 'football', official: false },
+  { name: 'FourFourTwo', url: 'https://www.fourfourtwo.com/rss', category: 'football', official: false },
+  { name: 'Football Italia', url: 'https://football-italia.net/feed/', category: 'football', official: false },
+  { name: 'MARCA English', url: 'https://www.marca.com/en/rss/football.xml', category: 'football', official: false },
+  { name: 'World Soccer Talk', url: 'https://worldsoccertalk.com/feed/', category: 'football', official: false },
+  { name: 'France 24 Sport', url: 'https://www.france24.com/en/sport/rss', category: 'football', official: false },
+  { name: 'RFI Sport', url: 'https://www.rfi.fr/en/sports/rss', category: 'football', official: false },
+  { name: 'SB Nation Soccer', url: 'https://www.sbnation.com/rss/index.xml', category: 'football', official: false },
+  { name: 'Bundesliga', url: 'https://www.bundesliga.com/en/bundesliga/rss', category: 'football', official: true },
+  { name: 'Birmingham Mail Football', url: 'https://www.birminghammail.co.uk/sport/football/football-news/rss.xml', category: 'football', official: false },
+  { name: 'Mirror Football', url: 'https://www.mirror.co.uk/sport/football/rss.xml', category: 'football', official: false },
+  { name: 'Daily Mail Football', url: 'https://www.dailymail.co.uk/sport/football/index.rss', category: 'football', official: false },
+  { name: 'The Sun Football', url: 'https://www.thesun.co.uk/sport/football/feed/', category: 'football', official: false },
+  { name: 'ABC News Sports', url: 'https://abcnews.go.com/abcnews/sportsheadlines', category: 'football', official: false },
+  { name: 'Al Jazeera Sport', url: 'https://www.aljazeera.com/xml/rss/all.xml', category: 'football', official: false },
+  { name: 'France 24 Football', url: 'https://www.france24.com/en/tag/football/rss', category: 'football', official: false },
+  { name: 'RFI Football', url: 'https://www.rfi.fr/en/tag/football/rss', category: 'football', official: false },
 ];
 
 function configuredFeeds() {
@@ -71,6 +92,34 @@ function validUrl(value) { try { const url = new URL(value); return url.protocol
 function sourceId(url) { return crypto.createHash('sha256').update(url).digest('hex').slice(0, 18); }
 function words(value) { return new Set(String(value).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((word) => word.length > 2)); }
 function similarity(a, b) { const left = words(a); const right = words(b); const overlap = [...left].filter((word) => right.has(word)).length; return overlap / Math.max(1, Math.min(left.size, right.size)); }
+
+// Query ranking deliberately rewards the full phrase, then the largest
+// matching word subset. That makes a precise corroborated story outrank a
+// newer headline that only matches one generic word.
+export function rankNewsForQuery(items, query) {
+  const raw = String(query || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const queryTokens = [...words(raw)].slice(0, 16);
+  if (!queryTokens.length) return [...items];
+  const now = Date.now();
+  const score = (item) => {
+    const title = String(item.title || '').toLowerCase();
+    const body = `${title} ${String(item.summary || '').toLowerCase()}`;
+    const titleWords = words(title);
+    const titleHits = queryTokens.filter((word) => titleWords.has(word)).length;
+    const bodyHits = queryTokens.filter((word) => body.includes(word)).length;
+    let subset = 0;
+    for (let size = queryTokens.length; size >= 1; size -= 1) {
+      if (queryTokens.slice(0, size).every((word) => body.includes(word))) { subset = size * size * 4; break; }
+    }
+    const phrase = raw.length > 4 && title.includes(raw) ? 28 : 0;
+    const corroboration = Math.min(5, Number(item.corroborationCount || 1)) * 5;
+    const official = item.verification === 'official' ? 8 : 0;
+    const ageHours = Math.max(0, (now - Date.parse(item.publishedAt || 0)) / 3600000);
+    const freshness = Math.max(0, 12 - Math.min(12, ageHours / 6));
+    return phrase + subset + titleHits * 12 + bodyHits * 3 + corroboration + official + freshness;
+  };
+  return [...items].sort((a, b) => score(b) - score(a) || Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0));
+}
 
 function parseFeed(xml, feed) {
   const blocks = [...xml.matchAll(/<(?:item|entry)\b[\s\S]*?<\/(?:item|entry)>/gi)].map((match) => match[0]);
