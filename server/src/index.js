@@ -4,9 +4,10 @@ import { registerRemux, haveFfmpeg, probe } from './remux.js';
 import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
 import crypto from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { core, CoreUnavailable, CoreBadResponse, CoreClientError } from './core.js';
@@ -475,7 +476,7 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
   }));
   const withDownloads = candidates.map((candidate) => ({
     ...candidate,
-    download: candidate.kind === 'hls' ? candidate.stream.replace('/api/stream/', '/api/remux/') : candidate.stream,
+    download: candidate.kind === 'hls' ? candidate.stream.replace('/api/stream/', '/api/hls-download/') : candidate.stream,
   }));
   return {
     kind: r?.kind || candidates[0]?.kind || 'file',
@@ -647,6 +648,115 @@ app.get('/api/stream/:token', { config: { rateLimit: { max: 1500, timeWindow: '1
   const stream = Readable.fromWeb(r.body);
   stream.on('error', () => { try { reply.raw.destroy(); } catch {} });
   return reply.send(stream);
+});
+
+function hlsAttr(line, name) {
+  const match = String(line).match(new RegExp(`${name}="([^"]+)"`, 'i'));
+  return match ? match[1] : '';
+}
+
+async function fetchHlsText(url, headers, signal) {
+  const response = await fetch(url, { headers, redirect: 'follow', signal });
+  if (!response.ok) throw new Error(`HLS manifest returned HTTP ${response.status}`);
+  const text = await response.text();
+  if (!text || text.length > 2_000_000 || !/^\s*#EXTM3U/i.test(text)) throw new Error('The source returned an invalid HLS manifest.');
+  return { text, url: response.url || url };
+}
+
+async function hlsSegments(manifestUrl, manifestText, headers, signal) {
+  let text = manifestText;
+  let base = manifestUrl;
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.some((line) => line.startsWith('#EXT-X-STREAM-INF'))) {
+    const variants = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!lines[i].startsWith('#EXT-X-STREAM-INF')) continue;
+      const next = lines.slice(i + 1).find((line) => !line.startsWith('#'));
+      if (!next) continue;
+      variants.push({ url: new URL(next, base).toString(), bandwidth: Number((lines[i].match(/BANDWIDTH=(\d+)/i) || [])[1]) || 0 });
+    }
+    variants.sort((a, b) => b.bandwidth - a.bandwidth);
+    if (!variants.length) throw new Error('The HLS master playlist has no media variant.');
+    const selected = await fetchHlsText(variants[0].url, headers, signal);
+    text = selected.text; base = selected.url;
+  }
+  const media = [];
+  for (const line of text.split(/\r?\n/).map((value) => value.trim())) {
+    if (!line) continue;
+    if (/^#EXT-X-KEY/i.test(line)) throw new Error('Encrypted HLS downloads are not supported.');
+    if (/^#EXT-X-MAP/i.test(line)) { const uri = hlsAttr(line, 'URI'); if (uri) media.push(new URL(uri, base).toString()); continue; }
+    if (!line.startsWith('#')) media.push(new URL(line, base).toString());
+  }
+  if (!media.length || media.length > 20_000) throw new Error('The HLS playlist contains no usable segment list.');
+  if (media.some(isAdRedirectTarget)) throw new Error('The HLS playlist contains an unsafe redirect target.');
+  return media;
+}
+
+async function fetchHlsSegment(url, headers, signal, index) {
+  let last;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(url, { headers, redirect: 'follow', signal });
+      if (!response.ok) throw new Error(`segment ${index} returned HTTP ${response.status}`);
+      const type = String(response.headers.get('content-type') || '').toLowerCase();
+      if (type.includes('text/html') || type.includes('application/json')) throw new Error(`segment ${index} returned non-media content`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!bytes.length) throw new Error(`segment ${index} was empty`);
+      return bytes;
+    } catch (error) {
+      last = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  throw last;
+}
+
+async function packageHlsDownload(req, reply, entry) {
+  const headers = { accept: '*/*', 'user-agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36', ...entry.headers };
+  const ac = new AbortController();
+  reply.raw.on('close', () => { if (!reply.raw.writableFinished) ac.abort(); });
+  let workDir = '';
+  try {
+    const manifest = await fetchHlsText(entry.url, headers, ac.signal);
+    const urls = await hlsSegments(manifest.url, manifest.text, headers, ac.signal);
+    workDir = await mkdtemp(path.join(os.tmpdir(), 'free-heart-hls-'));
+    const files = new Array(urls.length);
+    let cursor = 0;
+    const concurrency = Math.max(2, Math.min(12, Number(process.env.HLS_DOWNLOAD_CONCURRENCY) || 8));
+    const worker = async () => {
+      for (;;) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= urls.length) return;
+        const bytes = await fetchHlsSegment(urls[index], headers, ac.signal, index);
+        const filename = path.join(workDir, `${String(index).padStart(6, '0')}.seg`);
+        await writeFile(filename, bytes);
+        files[index] = filename;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, worker));
+    const list = files.map((file) => `file '${file.replaceAll("'", "'\\''")}'`).join('\n') + '\n';
+    const listFile = path.join(workDir, 'segments.txt');
+    await writeFile(listFile, list);
+    const ff = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listFile, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const cleanup = () => { try { ff.kill('SIGKILL'); } catch {} rm(workDir, { recursive: true, force: true }).catch(() => {}); };
+    ff.on('close', cleanup); ff.on('error', cleanup); reply.raw.on('close', cleanup);
+    reply.header('content-type', 'video/mp4').header('cache-control', 'no-store').header('x-hls-segments', String(urls.length)).header('x-hls-concurrency', String(concurrency));
+    return reply.send(ff.stdout);
+  } catch (error) {
+    if (workDir) await rm(workDir, { recursive: true, force: true }).catch(() => {});
+    if (ac.signal.aborted) return reply;
+    req.log.warn({ err: error.message }, 'parallel HLS download failed');
+    return reply.code(502).send({ error: 'hls_download_failed', message: error.message || 'The HLS source could not be downloaded.' });
+  }
+}
+
+app.get('/api/hls-download/:token', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
+  const token = z.string().regex(/^[\w-]{20,40}$/).parse(req.params.token);
+  const entry = tokens.get(token);
+  if (!entry || entry.exp < Date.now()) return reply.code(404).send({ error: 'expired', message: 'Stream link expired' });
+  entry.exp = Date.now() + TTL;
+  return packageHlsDownload(req, reply, entry);
 });
 
 let ffOk = null;
