@@ -97,6 +97,9 @@ struct ItemResponse {
     poster: Option<String>,
     #[serde(rename = "type")]
     media_type: &'static str,
+    source: &'static str,
+    #[serde(rename = "isShort")]
+    is_short: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,6 +118,9 @@ struct TitleResponse {
     media_type: &'static str,
     overview: Option<String>,
     episodes: Vec<EpisodeResponse>,
+    source: &'static str,
+    #[serde(rename = "isShort")]
+    is_short: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,6 +191,7 @@ fn duration_seconds(value: Option<&str>) -> Option<u32> {
 }
 
 fn item_response(item: CatalogItem) -> ItemResponse {
+    let is_short = item.id.provider == ProviderKind::MovieBox && item.id.value.starts_with("wefeedshort~");
     let public_id = if item.id.provider == ProviderKind::MovieBox
         && item.id.value.starts_with("wefeedshort~")
     {
@@ -206,10 +213,13 @@ fn item_response(item: CatalogItem) -> ItemResponse {
             MediaType::Movie => "movie",
             MediaType::Series => "series",
         },
+        source: if is_short { "wefeed" } else { item.id.provider.cache_key() },
+        is_short,
     }
 }
 
 fn title_response(details: MediaDetails) -> TitleResponse {
+    let is_short = details.id.provider == ProviderKind::MovieBox && details.id.value.starts_with("wefeedshort~");
     let episodes = details
         .seasons
         .iter()
@@ -249,6 +259,8 @@ fn title_response(details: MediaDetails) -> TitleResponse {
         },
         overview: details.description,
         episodes,
+        source: if is_short { "wefeed" } else { details.id.provider.cache_key() },
+        is_short,
     }
 }
 
@@ -363,14 +375,7 @@ async fn fallback_movie_releases(
     season: usize,
     episode: usize,
 ) -> Result<(ProviderKind, String, Vec<Release>), ProviderError> {
-    let mut providers = Vec::new();
-    // WeFeed Short IDs are backed by MovieBox metadata. If the short-drama
-    // endpoint has no current episode URL, retry the matching title through
-    // the ordinary MovieBox episode resolver before moving to other providers.
-    if details.id.value.starts_with("wefeedshort~") {
-        providers.push(ProviderKind::MovieBox);
-    }
-    providers.extend([ProviderKind::FourKHdHub, ProviderKind::Dramachi]);
+    let mut providers = vec![ProviderKind::FourKHdHub, ProviderKind::Dramachi];
     if addon_sources::enabled() {
         providers.push(ProviderKind::Addons);
     }
@@ -460,6 +465,8 @@ fn public_domain_demo_title(id: &str) -> TitleResponse {
         media_type: "movie",
         overview: Some("Open-licensed short film by the Blender Foundation, included to test Free Heart playback. Preserve the film's attribution when redistributing.".to_string()),
         episodes: Vec::new(),
+        source: "addons",
+        is_short: false,
     }
 }
 
@@ -716,6 +723,9 @@ async fn resolve(
         Ok(releases) if releases.iter().any(|release| release.direct_url().is_some()) => {
             (provider, subject_id.clone(), releases)
         }
+        Err(primary_error) if provider == ProviderKind::MovieBox && subject_id.starts_with("wefeedshort~") => {
+            return Err(ApiError::provider(primary_error));
+        }
         Err(primary_error) if provider == ProviderKind::MovieBox => fallback_movie_releases(
             &state.service,
             &details,
@@ -724,6 +734,13 @@ async fn resolve(
         )
         .await
         .map_err(|_| ApiError::provider(primary_error))?,
+        Ok(_) if provider == ProviderKind::MovieBox && subject_id.starts_with("wefeedshort~") => {
+            return Err(ApiError {
+                status: StatusCode::BAD_GATEWAY,
+                kind: "wefeed_source_unavailable",
+                message: "WeFeed returned no playable episode source; MovieBox sources are not used as a fallback for short dramas".to_string(),
+            });
+        }
         Ok(_) if provider == ProviderKind::MovieBox => fallback_movie_releases(
             &state.service,
             &details,

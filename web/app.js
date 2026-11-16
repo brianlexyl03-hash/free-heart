@@ -236,6 +236,18 @@ function renderCards(items, heading = '', sponsor = null) {
   const cards = shown.map((item, index) => `${sponsor && index > 0 && index % 8 === 0 ? renderSponsoredCard(sponsor) : ''}${card(item)}`).join('');
   return `${heading ? `<div class="row-heading"><h2>${esc(heading)}</h2><span>${shown.length} titles</span></div>` : ''}<div class="poster-row">${cards}</div>${note}`;
 }
+function isShortItem(item) { return Boolean(item?.isShort) || /^wefeedshort:/i.test(String(item?.id || '')) || String(item?.source || '').toLowerCase() === 'wefeed'; }
+function renderShortCards(items, heading = 'WeFeed short dramas') {
+  const shown = (items || []).filter((item) => getMode() !== 'hide' || !matureInfo(item).mature);
+  if (!shown.length) return '';
+  const cards = shown.map((item) => `<a class="short-drama-card search-short-card" href="${titleUrl(item.id)}"><span class="short-drama-poster">${item.poster ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(item.poster)}" alt="">` : '<span class="poster-placeholder"></span>'}<i>▶</i></span><b>${esc(item.title)}</b><small>${esc(item.year || '')} · WeFeed</small></a>`).join('');
+  return `<section class="search-short-results"><div class="row-heading"><h2>${esc(heading)}</h2><span>${shown.length} vertical stories</span></div><div class="shorts-grid">${cards}</div><p class="search-source-note">WeFeed catalogue only · <a href="#/shorts">Open the vertical feed →</a></p></section>`;
+}
+function renderSearchMedia(items, query, sponsor = null) {
+  const shorts = (items || []).filter(isShortItem);
+  const movies = (items || []).filter((item) => !isShortItem(item));
+  return `${movies.length ? renderCards(movies, `Movies & series for “${query}”`, sponsor) : ''}${renderShortCards(shorts)}`;
+}
 function renderUniversalResults(data, query) {
   const related = (data.related || []).map((term) => `<button class="related-search" data-query="${esc(term)}">${esc(term)} <span>⌕</span></button>`).join('');
   const news = (data.news || []).map((item) => `<a class="search-news-result" href="#/news/${encodeURIComponent(item.id)}">${item.image ? `<img loading="lazy" src="${esc(item.image)}" alt="">` : '<span class="search-news-placeholder"></span>'}<span><small>${esc(item.source || 'News')} · ${esc(newsDate(item.publishedAt))}</small><strong>${esc(item.title)}</strong><em>${esc(item.summary || '')}</em></span></a>`).join('');
@@ -263,7 +275,7 @@ async function home() {
     if (searchItems.length) {
       const hadMore = Boolean(document.getElementById('load-more'));
       const query = input.value.trim();
-      results.innerHTML = (searchData ? renderUniversalResults(searchData, query) : '') + renderCards(searchItems, `Movies & series for “${query}”`, searchAd) + (hadMore ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '');
+      results.innerHTML = (searchData ? renderUniversalResults(searchData, query) : '') + renderSearchMedia(searchItems, query, searchAd) + (hadMore ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '');
       wireSponsoredTracking();
       wireRelated();
     }
@@ -296,7 +308,7 @@ async function home() {
       for (const item of incoming) if (!seen.has(item.id)) { searchItems.push(item); seen.add(item.id); }
       searchPage = page;
       const moreButton = data.hasMore && searchItems.length > previousCount ? '<div class="search-more" style="display:flex;justify-content:center;padding:20px"><button id="load-more" class="ghost notify-button">Load more results</button></div>' : '';
-      results.innerHTML = renderUniversalResults(data, query) + renderCards(searchItems, `Movies & series for “${query}”`, searchAd) + moreButton;
+      results.innerHTML = renderUniversalResults(data, query) + renderSearchMedia(searchItems, query, searchAd) + moreButton;
       wireSponsoredTracking();
       document.getElementById('load-more')?.addEventListener('click', () => search({ more: true }));
       wireRelated();

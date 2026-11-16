@@ -260,6 +260,23 @@ app.get('/api/siteguard/status', async () => ({
   protections: ['global rate limiting', 'opaque stream tokens', 'private-network URL blocking', 'security response headers', 'resolver failover'],
 }));
 
+function mediaSearchScore(item, query) {
+  const title = String(item?.title || '').toLowerCase();
+  const normalized = String(query || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const terms = normalized.split(' ').filter((term) => term.length > 2);
+  const hits = terms.filter((term) => title.includes(term)).length;
+  const exact = title === normalized ? 120 : title.includes(normalized) ? 70 : 0;
+  const type = String(item?.type || '').toLowerCase();
+  const source = String(item?.source || '').toLowerCase();
+  const clipLike = /\b(trailer|teaser|clip|recap|review|reaction|highlights|promo|behind the scenes|episode\s*\d+|part\s*\d+)\b/i.test(title);
+  const clipPenalty = clipLike && type === 'movie' && !/openmovie|commons|archive/i.test(source) ? -160 : 0;
+  const sourceBoost = /moviebox|dramachi|fourkhdhub/i.test(source) ? 8 : /archive|openmovie|commons|loc|nasa/i.test(source) ? 5 : 0;
+  return exact + hits * 18 + sourceBoost + clipPenalty;
+}
+function rankMediaResults(items, query) {
+  return [...items].filter((item) => item?.isShort || !(/\b(trailer|teaser|clip|recap|review|reaction|highlights|promo)\b/i.test(String(item.title || '')) || String(item.type || '').toLowerCase() !== 'movie' || /openmovie|commons|archive/i.test(String(item.source || '')))).sort((a, b) => mediaSearchScore(b, query) - mediaSearchScore(a, query));
+}
+
 app.get('/api/search', async (req) => {
   const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
   const [coreResult, archiveResult, openMediaResult, newsResult] = await Promise.allSettled([core.search(q, page), searchArchive(q, page), searchOpenMedia(q, page), getNews({ category: 'football', limit: 60 })]);
@@ -269,11 +286,11 @@ app.get('/api/search', async (req) => {
   if (coreResult.status === 'rejected' && !archiveItems.length && !openMediaItems.length && !freshNews.length) throw coreResult.reason;
   const base = coreResult.status === 'fulfilled' ? coreResult.value : { results: [], page, hasMore: false };
   const seen = new Set();
-  const results = [...(base.results || []), ...archiveItems, ...openMediaItems].filter((item) => {
+  const results = rankMediaResults([...(base.results || []), ...archiveItems, ...openMediaItems].filter((item) => {
     if (!item?.id || seen.has(item.id)) return false;
     seen.add(item.id);
     return true;
-  });
+  }), q);
   const queryWords = q.toLowerCase().split(/\s+/).filter((word) => word.length > 2);
   const news = rankNewsForQuery(freshNews.filter((item) => queryWords.some((word) => `${item.title} ${item.summary}`.toLowerCase().includes(word))), q).slice(0, 10);
   const related = [...new Set([`${q} news`, `${q} latest`, `${q} profile`, `${q} official website`])];

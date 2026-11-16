@@ -14,6 +14,7 @@ const Item = z.object({
   id: z.string(), title: z.string(),
   year: z.union([z.string(), z.number()]).nullish(),
   poster: z.string().nullish(), type: z.string().nullish(),
+  source: z.string().nullish(), isShort: z.boolean().optional(),
 });
 const Search = z.object({ results: z.array(Item), page: z.number().optional(), hasMore: z.boolean().optional() });
 const Title = Item.extend({
