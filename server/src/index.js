@@ -782,7 +782,7 @@ async function publicMovieUrls() {
   const responses = await Promise.allSettled(['popular', 'trending', 'latest movies'].map((query) => core.search(query, 1)));
   const seen = new Set();
   const providerItems = responses.flatMap((response) => response.status === 'fulfilled' ? response.value.results || [] : []);
-  const lawfulSamples = ['archive:BigBuckBunny_124', 'commons:20022660', 'blender:1065', 'loc:00694131', 'nasa:KSC-19850101-MH-NAS01-0001-Apollo_11_Buzz_Aldrin_Experts-B_2141'].map((id) => ({ id }));
+  const lawfulSamples = ['archive:BigBuckBunny_124', 'commons:20022660', 'openmovie:77900952', 'blender:1065', 'loc:00694131', 'nasa:KSC-19850101-MH-NAS01-0001-Apollo_11_Buzz_Aldrin_Experts-B_2141'].map((id) => ({ id }));
   return [...providerItems, ...lawfulSamples].filter((item) => item?.id && !seen.has(String(item.id)) && seen.add(String(item.id))).slice(0, 505).map((item) => `/title/${encodeURIComponent(item.id)}`);
 }
 app.get('/news-sitemap.xml', async (_req, reply) => {

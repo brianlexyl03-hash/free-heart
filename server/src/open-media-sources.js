@@ -99,6 +99,26 @@ async function nasaTitle(id) {
 }
 
 const BLENDER = [{ id: '1065', title: 'Sintel', year: '2010', poster: '', license: 'Blender Open Movie; verify project CC license before reuse' }];
+const OPEN_MOVIES = [
+  ['40108642', 'Big Buck Bunny 4K', '2008', 'Big Buck Bunny 4K.webm'],
+  ['77900952', 'Spring', '2019', 'Spring - Blender Open Movie.webm'],
+].map(([id, title, year, filename]) => ({ id, title, year, filename, license: 'Blender Open Movie; check the item license and preserve attribution' }));
+
+async function searchOpenMovies(query) {
+  const needle = queryText(query).toLowerCase();
+  if (!needle || !/(blender|open movie|bunny|caminandes|coffee run|cosmos|elephants dream|glass half|hero|singularity|spring|sprite fright|tears of steel|dweebs|wing it|charge)/i.test(needle)) return [];
+  return OPEN_MOVIES.filter((x) => x.title.toLowerCase().split(/\s+/).some((word) => word.length > 2 && needle.includes(word)) || /blender|open movie/i.test(needle))
+    .map((x) => item(x.id, x.title, x.year, '', 'openmovie', x.license));
+}
+
+async function openMovieTitle(id) {
+  const found = OPEN_MOVIES.find((x) => x.id === id);
+  if (!found) throw new Error('Unknown Open Movie asset');
+  const url = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(found.filename)}`;
+  const title = { ...item(id, found.title, found.year, '', 'openmovie', found.license), overview: 'Official Blender Open Movie file mirrored on Wikimedia Commons. Preserve attribution and verify the item license before redistribution.', episodes: [], media: [{ url, kind: kind(url), headers: {} }] };
+  return { ...title, id: `openmovie:${id}`, source: 'openmovie', title: found.title, year: found.year, rights: found.license };
+}
+
 async function searchBlender(query) {
   if (!/(sintel|blender|open movie|animated film)/i.test(queryText(query))) return [];
   return BLENDER.map((x) => item(x.id, x.title, x.year, x.poster, 'blender', x.license));
@@ -113,11 +133,11 @@ async function blenderTitle(id) {
   return { ...item(found.id, found.title, found.year, found.poster, 'blender', found.license), overview: 'Official Blender Open Movie asset. Preserve the project attribution and verify its current license before redistribution.', episodes: [], media: [{ url: video, kind: 'file', headers: { referer: 'https://studio.blender.org/' } }] };
 }
 
-export function isOpenMediaId(id) { return /^(commons|blender|loc|nasa):[^:]+$/i.test(String(id || '')); }
+export function isOpenMediaId(id) { return /^(commons|openmovie|blender|loc|nasa):[^:]+$/i.test(String(id || '')); }
 export async function searchOpenMedia(query, page = 1) {
   const cleanQuery = queryText(query); if (!cleanQuery) return [];
   const key = `search:${cleanQuery.toLowerCase()}:${pageNumber(page)}`; const hit = cached(key); if (hit) return hit;
-  const results = await Promise.allSettled([searchCommons(cleanQuery, page), searchLoc(cleanQuery, page), searchNasa(cleanQuery, page), searchBlender(cleanQuery)]);
+  const results = await Promise.allSettled([searchCommons(cleanQuery, page), searchLoc(cleanQuery, page), searchNasa(cleanQuery, page), searchBlender(cleanQuery), searchOpenMovies(cleanQuery)]);
   const merged = results.flatMap((r) => r.status === 'fulfilled' ? r.value : []);
   const seen = new Set(); return store(key, merged.filter((x) => !seen.has(x.id) && seen.add(x.id)).slice(0, 60));
 }
@@ -125,6 +145,7 @@ export async function getOpenMediaTitle(id) {
   const [source, value] = String(id).split(':', 2);
   if (!value) throw new Error('Invalid open media id');
   if (source === 'commons') return commonsTitle(value);
+  if (source === 'openmovie') return openMovieTitle(value);
   if (source === 'loc') return locTitle(value);
   if (source === 'nasa') return nasaTitle(value);
   if (source === 'blender') return blenderTitle(value);
