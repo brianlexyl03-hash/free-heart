@@ -9,6 +9,31 @@ const titleUrl = (id) => `/title/${encodeURIComponent(id)}`;
 const TASTE_KEY = 'free.taste.v1';
 const NOTICE_KEY = 'free.notice.v1';
 let activeShortsFeed = null;
+let installPromptEvent = null;
+
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  installPromptEvent = event;
+  document.querySelectorAll('[data-install-app]').forEach((button) => { button.hidden = false; });
+});
+
+async function installApp() {
+  if (!installPromptEvent) return false;
+  installPromptEvent.prompt();
+  const choice = await installPromptEvent.userChoice.catch(() => ({ outcome: 'dismissed' }));
+  installPromptEvent = null;
+  document.querySelectorAll('[data-install-app]').forEach((button) => { button.hidden = true; });
+  return choice.outcome === 'accepted';
+}
+
+async function shareFreeHeart() {
+  const share = { title: 'free❤️‍🔥', text: 'Watch, save, and discover stories on free❤️‍🔥.', url: location.origin + '/' };
+  try {
+    if (navigator.share) { await navigator.share(share); return true; }
+    await navigator.clipboard?.writeText(share.url);
+    return true;
+  } catch { return false; }
+}
 
 function tasteSeeds() {
   return JSON.parse(localStorage.getItem(TASTE_KEY) || '[]').filter(Boolean).slice(0, 4);
@@ -219,10 +244,12 @@ function renderUniversalResults(data, query) {
 }
 
 async function home() {
-  app.innerHTML = `<section class="hero"><div class="hero-copy"><span class="eyebrow">Your next obsession</span><h1>Watch something<br><em>unforgettable.</em></h1><p>Search movies, live news, people, and the web.</p><div class="search-shell"><span>⌕</span><input id="q" type="search" placeholder="Search Cristiano Ronaldo, Inception…" autocomplete="off"></div><button id="notify-me" class="ghost notify-button">⌁ Notify me of picks</button><button id="mature-mode" class="ghost notify-button"></button></div></section><section id="results" class="content-section"><div class="row-heading"><h2>Find your next story</h2><span>Search movies, news, and web results</span></div><div class="notice">Start typing a person, headline, movie, or team.</div></section>`;
+  app.innerHTML = `<section class="hero"><div class="hero-copy"><span class="eyebrow">Your next obsession</span><h1>Watch something<br><em>unforgettable.</em></h1><p>Search movies, live news, people, and the web.</p><div class="search-shell"><span>⌕</span><input id="q" type="search" placeholder="Search Cristiano Ronaldo, Inception…" autocomplete="off"></div><div class="hero-actions"><button id="notify-me" class="ghost notify-button">⌁ Notify me of picks</button><button data-install-app class="ghost notify-button" ${installPromptEvent ? '' : 'hidden'}>＋ Install app</button><button id="share-free" class="ghost notify-button">↗ Share free</button></div><button id="mature-mode" class="ghost notify-button"></button></div></section><section id="results" class="content-section"><div class="row-heading"><h2>Find your next story</h2><span>Search movies, news, and web results</span></div><div class="notice">Start typing a person, headline, movie, or team.</div></section>`;
   const input = document.getElementById('q');
   const results = document.getElementById('results');
   document.getElementById('notify-me').onclick = async (event) => { event.currentTarget.textContent = (await enableNotifications()) ? '✓ Picks enabled' : 'Notifications blocked'; };
+  document.querySelector('[data-install-app]')?.addEventListener('click', async (event) => { event.currentTarget.textContent = (await installApp()) ? '✓ Installed' : 'Install unavailable'; });
+  document.getElementById('share-free').onclick = async (event) => { event.currentTarget.textContent = (await shareFreeHeart()) ? '✓ Link ready' : 'Share cancelled'; setTimeout(() => { event.currentTarget.textContent = '↗ Share free'; }, 2200); };
   let timer;
   let searchPage = 1;
   let searchItems = [];
