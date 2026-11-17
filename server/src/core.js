@@ -75,11 +75,12 @@ async function cached(key, freshMs, staleMs, fn) {
 
 const BASE = process.env.CORE_URL || 'http://127.0.0.1:7070';
 async function call(path, opts = {}) {
+  const { timeoutMs = 25000, retries = 3, ...requestOptions } = opts;
   let lastError;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < retries; attempt += 1) {
     let r;
     try {
-      r = await fetch(BASE + path, { ...opts, signal: AbortSignal.timeout(25000) });
+      r = await fetch(BASE + path, { ...requestOptions, signal: AbortSignal.timeout(timeoutMs) });
     } catch {
       lastError = new CoreUnavailable('Media core is unreachable');
     }
@@ -94,7 +95,7 @@ async function call(path, opts = {}) {
       console.error('[core]', path.split('?')[0], r.status, b.error || '', detail);
       lastError = new CoreBadResponse(friendlyCore(r.status, detail));
     }
-    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+    if (attempt < retries - 1) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
   }
   throw lastError || new CoreBadResponse();
 }
@@ -110,8 +111,8 @@ const parse = (schema, v) => {
 export const core = {
   enabled: () => Boolean(BASE),
   async health() { return parse(Health, await call('/health')); },
-  async search(q, page) { return cached(`search|${String(q).toLowerCase()}|${page}`, 300000, 43200000, async () => parse(Search, await call(`/search?q=${encodeURIComponent(q)}&page=${page}`))); },
-  async shorts(q, page) { return cached(`shorts|${String(q).toLowerCase()}|${page}`, 60000, 0, async () => parse(Search, await call(`/shorts?q=${encodeURIComponent(q)}&page=${page}`))); },
+  async search(q, page) { return cached(`search|${String(q).toLowerCase()}|${page}`, 300000, 43200000, async () => parse(Search, await call(`/search?q=${encodeURIComponent(q)}&page=${page}`, { timeoutMs: 10000, retries: 1 }))); },
+  async shorts(q, page) { return cached(`shorts|${String(q).toLowerCase()}|${page}`, 60000, 0, async () => parse(Search, await call(`/shorts?q=${encodeURIComponent(q)}&page=${page}`, { timeoutMs: 16000, retries: 2 }))); },
   async title(id) { return cached(`title|${id}`, 600000, 43200000, async () => parse(Title, await call(`/title/${encodeURIComponent(id)}`))); },
   async resolve(id, episode, resolution) {
     return cached(`resolve|${id}|${episode ?? ''}|${resolution ?? ''}`, 90000, 0, async () => parse(Resolved, await call('/resolve', {

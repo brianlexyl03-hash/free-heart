@@ -22,7 +22,7 @@ function store(key, value) {
   return value;
 }
 async function json(url, init = {}) {
-  const response = await fetch(url, { ...init, headers: { accept: 'application/json', 'user-agent': UA, ...(init.headers || {}) }, signal: AbortSignal.timeout(12000) });
+  const response = await fetch(url, { ...init, headers: { accept: 'application/json', 'user-agent': UA, ...(init.headers || {}) }, signal: init.signal || AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error(`Open media source HTTP ${response.status}`);
   return response.json();
 }
@@ -137,7 +137,17 @@ export function isOpenMediaId(id) { return /^(commons|openmovie|blender|loc|nasa
 export async function searchOpenMedia(query, page = 1) {
   const cleanQuery = queryText(query); if (!cleanQuery) return [];
   const key = `search:${cleanQuery.toLowerCase()}:${pageNumber(page)}`; const hit = cached(key); if (hit) return hit;
-  const results = await Promise.allSettled([searchCommons(cleanQuery, page), searchLoc(cleanQuery, page), searchNasa(cleanQuery, page), searchBlender(cleanQuery), searchOpenMovies(cleanQuery)]);
+  const sourceTimeout = (promise) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Open-media source timed out')), 5500)),
+  ]);
+  const results = await Promise.allSettled([
+    sourceTimeout(searchCommons(cleanQuery, page)),
+    sourceTimeout(searchLoc(cleanQuery, page)),
+    sourceTimeout(searchNasa(cleanQuery, page)),
+    sourceTimeout(searchBlender(cleanQuery)),
+    sourceTimeout(searchOpenMovies(cleanQuery)),
+  ]);
   const merged = results.flatMap((r) => r.status === 'fulfilled' ? r.value : []);
   const seen = new Set(); return store(key, merged.filter((x) => !seen.has(x.id) && seen.add(x.id)).slice(0, 60));
 }

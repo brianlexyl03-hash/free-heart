@@ -684,8 +684,18 @@ async fn resolve(
     if request.id.is_empty() || request.id.len() > 96 {
         return Err(ApiError::bad_request("Invalid title id"));
     }
-    let (season, episode) = episode_parts(request.episode.as_deref())?;
     let (provider, subject_id) = parse_media_id(&request.id)?;
+    let (mut season, mut episode) = episode_parts(request.episode.as_deref())?;
+    // WeFeed Shorts are episodic even when a title card is opened without an
+    // explicit episode query. The upstream play-info endpoint rejects s0e0.
+    if provider == ProviderKind::MovieBox
+        && subject_id.starts_with("wefeedshort~")
+        && season == 0
+        && episode == 0
+    {
+        season = 1;
+        episode = 1;
+    }
     if provider == ProviderKind::Addons && subject_id == "movie:tt1254207" {
         return open_film_demo_resolve_response()
             .map(Json)
