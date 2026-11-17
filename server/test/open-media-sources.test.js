@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getOpenMediaTitle, isOpenMediaId } from '../src/open-media-sources.js';
+import { getOpenMediaTitle, isOpenMediaId, qualityLabel, rightsPolicy } from '../src/open-media-sources.js';
 
 test('recognizes all lawful open-media source namespaces', () => {
   for (const id of [
@@ -59,4 +59,20 @@ test('resolves LOC nested item and video_stream fields', async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('keeps rights review explicit for every catalog source', () => {
+  for (const source of ['commons', 'loc', 'nasa', 'blender', 'openmovie']) {
+    const policy = rightsPolicy(source);
+    assert.equal(policy.status, 'review-required', source);
+    assert.ok(policy.basis.length > 10, source);
+    assert.match(policy.sourceUrl, /^https:\/\//, source);
+  }
+});
+
+test('maps source dimensions to conservative quality labels', () => {
+  assert.equal(qualityLabel(3840, 2160), '4K');
+  assert.equal(qualityLabel(1920, 1080), '1080p');
+  assert.equal(qualityLabel(1280, 720), '720p');
+  assert.equal(qualityLabel(0, 0), 'unknown');
 });

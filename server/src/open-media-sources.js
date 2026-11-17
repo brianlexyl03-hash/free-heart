@@ -31,27 +31,53 @@ function queryText(query) { return String(query || '').replace(/[\u0000-\u001f]/
 function validHttp(url) { try { const u = new URL(url); return u.protocol === 'https:'; } catch { return false; } }
 function ext(url) { try { return new URL(url).pathname.toLowerCase().match(/\.[a-z0-9]{2,5}$/)?.[0] || ''; } catch { return ''; } }
 function kind(url) { return /\.m3u8(?:$|\?)/i.test(url) ? 'hls' : 'file'; }
-function item(id, title, year, poster, source, rights) {
-  return { id: `${source}:${id}`, title: clean(title, 240), year: year ? String(year).slice(0, 4) : null, poster: poster || null, type: 'movie', source, rights: clean(rights, 240) };
+export function rightsPolicy(source) {
+  const key = String(source || '').toLowerCase();
+  if (key === 'commons') return { status: 'review-required', basis: 'per-file public-domain or compatible free license', sourceUrl: 'https://commons.wikimedia.org/wiki/Commons:Licensing' };
+  if (key === 'loc') return { status: 'review-required', basis: 'item-level Library of Congress rights advisory', sourceUrl: 'https://www.loc.gov/collections/national-screening-room/about-this-collection/rights-and-access/' };
+  if (key === 'nasa') return { status: 'review-required', basis: 'asset-level NASA credits and third-party rights screening', sourceUrl: 'https://www.nasa.gov/nasa-brand-center/images-and-media/' };
+  if (key === 'blender' || key === 'openmovie') return { status: 'review-required', basis: 'project/file license and third-party-content review', sourceUrl: 'https://studio.blender.org/terms-and-conditions/' };
+  return { status: 'unknown', basis: 'source rights not classified', sourceUrl: null };
+}
+export function qualityLabel(width, height) {
+  const pixels = Math.max(Number(width) || 0, Number(height) || 0);
+  if (pixels >= 3840) return '4K';
+  if (pixels >= 2160) return '2160p';
+  if (pixels >= 1920) return '1080p';
+  if (pixels >= 1280) return '720p';
+  if (pixels >= 854) return '480p';
+  if (pixels > 0) return `${pixels}p`;
+  return 'unknown';
+}
+function technicalInfo(info = {}) {
+  const width = Number(info.width) || 0;
+  const height = Number(info.height) || 0;
+  const size = Number(info.size) || 0;
+  const duration = Number(info.duration) || 0;
+  return { label: qualityLabel(width, height), width: width || null, height: height || null, sizeBytes: size || null, durationSeconds: duration || null, mime: clean(info.mime, 80) || null };
+}
+function item(id, title, year, poster, source, rights, extra = {}) {
+  const policy = rightsPolicy(source);
+  return { id: `${source}:${id}`, title: clean(title, 240), year: year ? String(year).slice(0, 4) : null, poster: poster || null, type: 'movie', source, rights: clean(rights, 240), rightsStatus: extra.rightsStatus || policy.status, rightsBasis: extra.rightsBasis || policy.basis, rightsUrl: extra.rightsUrl || policy.sourceUrl, canonicalUrl: extra.canonicalUrl || null, attribution: clean(extra.attribution, 500) || null, quality: extra.quality || { label: 'unknown' }, availability: extra.availability || 'source-hosted', ...extra };
 }
 
 async function searchCommons(query, page) {
   const q = `${queryText(query)} filetype:video`;
   const url = new URL('https://commons.wikimedia.org/w/api.php');
-  url.search = new URLSearchParams({ action: 'query', format: 'json', generator: 'search', gsrsearch: q, gsrnamespace: '6', gsrlimit: '20', gsroffset: String((pageNumber(page) - 1) * 20), prop: 'imageinfo', iiprop: 'url|mime|size|mediatype|extmetadata' });
+  url.search = new URLSearchParams({ action: 'query', format: 'json', generator: 'search', gsrsearch: q, gsrnamespace: '6', gsrlimit: '20', gsroffset: String((pageNumber(page) - 1) * 20), prop: 'imageinfo', iiprop: 'url|descriptionurl|mime|size|width|height|duration|mediatype|extmetadata' });
   const data = await json(url);
   return Object.values(data?.query?.pages || {}).map((p) => {
     const info = p.imageinfo?.[0]; const meta = info?.extmetadata || {};
     const mime = String(info?.mime || ''); const license = clean(meta.LicenseShortName?.value || meta.UsageTerms?.value);
     if (!info?.url || !VIDEO_MIME.test(mime) || !/(public domain|creative commons|cc by|cc0)/i.test(license)) return null;
-    return item(String(p.pageid), String(p.title || '').replace(/^File:/, ''), meta.DateTimeOriginal?.value, '', 'commons', license);
+    return item(String(p.pageid), String(p.title || '').replace(/^File:/, ''), meta.DateTimeOriginal?.value, '', 'commons', license, { canonicalUrl: info.descriptionurl || `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}`, rightsUrl: meta.LicenseUrl?.value || 'https://commons.wikimedia.org/wiki/Commons:Licensing', attribution: meta.Attribution?.value || meta.Artist?.value || null, quality: technicalInfo(info) });
   }).filter(Boolean);
 }
 async function commonsTitle(pageid) {
-  const data = await json(`https://commons.wikimedia.org/w/api.php?action=query&format=json&pageids=${encodeURIComponent(pageid)}&prop=imageinfo&iiprop=url%7Cmime%7Csize%7Cduration%7Cextmetadata`);
+  const data = await json(`https://commons.wikimedia.org/w/api.php?action=query&format=json&pageids=${encodeURIComponent(pageid)}&prop=imageinfo&iiprop=url%7Cdescriptionurl%7Cmime%7Csize%7Cwidth%7Cheight%7Cduration%7Cextmetadata`);
   const p = Object.values(data?.query?.pages || {})[0]; const info = p?.imageinfo?.[0]; const meta = info?.extmetadata || {};
   if (!info?.url || !VIDEO_MIME.test(String(info.mime || '')) || !/(public domain|creative commons|cc by|cc0)/i.test(clean(meta.LicenseShortName?.value || meta.UsageTerms?.value))) throw new Error('Commons item has no approved per-file license');
-  return { ...item(String(pageid), String(p.title || '').replace(/^File:/, ''), meta.DateTimeOriginal?.value, '', 'commons', meta.LicenseShortName?.value || meta.UsageTerms?.value), overview: clean(meta.ImageDescription?.value) || null, episodes: [], media: [{ url: info.url.split('?')[0], kind: kind(info.url), headers: { referer: `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}` } }] };
+  return { ...item(String(pageid), String(p.title || '').replace(/^File:/, ''), meta.DateTimeOriginal?.value, '', 'commons', meta.LicenseShortName?.value || meta.UsageTerms?.value, { canonicalUrl: info.descriptionurl || `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}`, rightsUrl: meta.LicenseUrl?.value || 'https://commons.wikimedia.org/wiki/Commons:Licensing', attribution: meta.Attribution?.value || meta.Artist?.value || null, quality: technicalInfo(info) }), overview: clean(meta.ImageDescription?.value) || null, episodes: [], media: [{ url: info.url.split('?')[0], kind: kind(info.url), headers: { referer: info.descriptionurl || `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}` } }] };
 }
 
 async function searchLoc(query, page) {
@@ -65,14 +91,14 @@ async function searchLoc(query, page) {
   return (data?.results || []).map((r) => {
     const id = String(r.id || '').match(/item\/([^/?#]+)/i)?.[1] || String(r.id || '').replace(/\W+/g, '-').slice(-80);
     if (!id || !r.title) return null;
-    return item(id, r.title, r.date, r.image_url || r.url, 'loc', 'Item-level rights review required; National Screening Room');
+    return item(id, r.title, r.date, r.image_url || r.url, 'loc', 'Item-level rights review required; National Screening Room', { canonicalUrl: r.id || `https://www.loc.gov/item/${encodeURIComponent(id)}/`, rightsUrl: 'https://www.loc.gov/collections/national-screening-room/about-this-collection/rights-and-access/', quality: technicalInfo({ width: r.width, height: r.height, duration: r.duration, mime: r.original_format }) });
   }).filter(Boolean);
 }
 async function locTitle(id) {
   const known = { '00694131': { title: 'May Irwin kiss', year: '1896', media: 'https://tile.loc.gov/storage-services/service/mbrs/ntscrm/00047798/00047798.mp4', rights: 'Library of Congress item record states no known restrictions in the vast majority of National Screening Room materials; verify before redistribution.' } };
   if (known[id]) {
     const x = known[id];
-    return { ...item(id, x.title, x.year, '', 'loc', x.rights), overview: 'National Screening Room film from the Library of Congress.', episodes: [], media: [{ url: x.media, kind: 'file', headers: { referer: 'https://www.loc.gov/item/00694131/' } }] };
+    return { ...item(id, x.title, x.year, '', 'loc', x.rights, { canonicalUrl: 'https://www.loc.gov/item/00694131/', rightsUrl: 'https://www.loc.gov/collections/national-screening-room/about-this-collection/rights-and-access/' }), overview: 'National Screening Room film from the Library of Congress.', episodes: [], media: [{ url: x.media, kind: 'file', headers: { referer: 'https://www.loc.gov/item/00694131/' } }] };
   }
   const data = await json(`https://www.loc.gov/item/${encodeURIComponent(id)}/?fo=json`);
   const record = data?.item && typeof data.item === 'object' ? data.item : data;
@@ -92,16 +118,18 @@ async function locTitle(id) {
     resource?.url,
     ...(Array.isArray(resource?.files) ? resource.files.flatMap((file) => [file?.video, file?.video_stream, file?.url, file?.download, file?.filename]) : []),
   ]).filter((value) => typeof value === 'string');
-  const video = candidates.find((u) => validHttp(u) && /\.mp4(?:$|\?)/i.test(u));
-  if (!video) throw new Error('Library of Congress item has no direct MP4');
-  return { ...item(id, record?.title || data.title, record?.date || data.date, record?.image_url || data.image_url, 'loc', rights || 'National Screening Room; item-level review'), overview: clean(record?.description || data.description) || null, episodes: [], media: [{ url: video, kind: 'file', headers: { referer: `https://www.loc.gov/item/${encodeURIComponent(id)}/` } }] };
+  const videoStream = candidates.find((u) => validHttp(u) && /\.m3u8(?:$|\?)/i.test(u));
+  const video = candidates.find((u) => validHttp(u) && /\.(?:mp4|mov|webm)(?:$|\?)/i.test(u));
+  if (!videoStream && !video) throw new Error('Library of Congress item has no documented playable video resource');
+  const mediaUrl = videoStream || video;
+  return { ...item(id, record?.title || data.title, record?.date || data.date, record?.image_url || data.image_url, 'loc', rights || 'National Screening Room; item-level review', { canonicalUrl: data.id || `https://www.loc.gov/item/${encodeURIComponent(id)}/`, rightsUrl: 'https://www.loc.gov/collections/national-screening-room/about-this-collection/rights-and-access/', quality: technicalInfo({ width: record?.width || data.width, height: record?.height || data.height, duration: record?.duration || data.duration }) }), overview: clean(record?.description || data.description) || null, episodes: [], media: [{ url: mediaUrl, kind: kind(mediaUrl), headers: { referer: `https://www.loc.gov/item/${encodeURIComponent(id)}/` } }] };
 }
 
 async function searchNasa(query, page) {
   const url = new URL('https://images-api.nasa.gov/search');
   url.search = new URLSearchParams({ q: queryText(query), media_type: 'video', page_size: '20', page: String(pageNumber(page)) });
   const data = await json(url);
-  return (data?.collection?.items || []).map((r) => { const d = r.data?.[0]; if (!d?.nasa_id || !d.title) return null; const img = r.links?.find((l) => l.render === 'image')?.href || ''; return item(d.nasa_id, d.title, d.date_created, img, 'nasa', 'NASA media; screen each item for third-party rights and endorsement restrictions'); }).filter(Boolean);
+  return (data?.collection?.items || []).map((r) => { const d = r.data?.[0]; if (!d?.nasa_id || !d.title) return null; const img = r.links?.find((l) => l.render === 'image')?.href || ''; return item(d.nasa_id, d.title, d.date_created, img, 'nasa', 'NASA media; screen each item for third-party rights and endorsement restrictions', { canonicalUrl: `https://images.nasa.gov/details/${encodeURIComponent(d.nasa_id)}`, rightsUrl: 'https://www.nasa.gov/nasa-brand-center/images-and-media/' }); }).filter(Boolean);
 }
 async function nasaTitle(id) {
   const data = await json(`https://images-api.nasa.gov/asset/${encodeURIComponent(id)}`);
@@ -109,7 +137,7 @@ async function nasaTitle(id) {
   const video = files.find((u) => /~(?:orig|medium|small)\.mp4(?:$|\?)/i.test(u)) || files.find((u) => /\.mp4(?:$|\?)/i.test(u));
   if (!video) throw new Error('NASA item has no direct MP4 rendition');
   const search = await searchNasa(id, 1).catch(() => []); const found = search[0] || item(id, id, null, '', 'nasa', 'NASA media; item-level rights screening');
-  return { ...found, overview: null, episodes: [], media: [{ url: video, kind: 'file', headers: { referer: 'https://images.nasa.gov' } }] };
+  return { ...found, canonicalUrl: `https://images.nasa.gov/details/${encodeURIComponent(id)}`, rightsUrl: 'https://www.nasa.gov/nasa-brand-center/images-and-media/', quality: { label: files.some((u) => /~orig\.mp4(?:$|\?)/i.test(u)) ? 'original' : 'unknown', renditions: files.filter((u) => /\.mp4(?:$|\?)/i.test(u)).map((u) => u.match(/~(orig|large|medium|small)\.mp4/i)?.[1] || 'unknown') }, overview: null, episodes: [], media: [{ url: video, kind: 'file', headers: { referer: 'https://images.nasa.gov' } }] };
 }
 
 const BLENDER = [{ id: '1065', title: 'Elephants Dream', year: '2006', poster: '', license: 'CC BY 2.5; preserve the Elephants Dream credit scroll and attribution', licenseUrl: 'https://orange.blender.org/blog/creative-commons-license-2/' }];
@@ -122,20 +150,20 @@ async function searchOpenMovies(query) {
   const needle = queryText(query).toLowerCase();
   if (!needle || !/(blender|open movie|bunny|caminandes|coffee run|cosmos|elephants dream|glass half|hero|singularity|spring|sprite fright|tears of steel|dweebs|wing it|charge)/i.test(needle)) return [];
   return OPEN_MOVIES.filter((x) => x.title.toLowerCase().split(/\s+/).some((word) => word.length > 2 && needle.includes(word)) || /blender|open movie/i.test(needle))
-    .map((x) => item(x.id, x.title, x.year, '', 'openmovie', x.license));
+    .map((x) => item(x.id, x.title, x.year, '', 'openmovie', x.license, { canonicalUrl: 'https://studio.blender.org/films/', rightsUrl: 'https://studio.blender.org/terms-and-conditions/', quality: { label: /4k/i.test(x.title) ? '4K' : 'unknown' } }));
 }
 
 async function openMovieTitle(id) {
   const found = OPEN_MOVIES.find((x) => x.id === id);
   if (!found) throw new Error('Unknown Open Movie asset');
   const url = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(found.filename)}`;
-  const title = { ...item(id, found.title, found.year, '', 'openmovie', found.license), overview: 'Official Blender Open Movie file mirrored on Wikimedia Commons. Preserve attribution and verify the item license before redistribution.', episodes: [], media: [{ url, kind: kind(url), headers: {} }] };
+  const title = { ...item(id, found.title, found.year, '', 'openmovie', found.license, { canonicalUrl: 'https://studio.blender.org/films/', rightsUrl: 'https://studio.blender.org/terms-and-conditions/', quality: { label: /4k/i.test(found.title) ? '4K' : 'unknown' } }), overview: 'Official Blender Open Movie file mirrored on Wikimedia Commons. Preserve attribution and verify the item license before redistribution.', episodes: [], media: [{ url, kind: kind(url), headers: {} }] };
   return { ...title, id: `openmovie:${id}`, source: 'openmovie', title: found.title, year: found.year, rights: found.license };
 }
 
 async function searchBlender(query) {
   if (!/(elephants dream|blender|open movie|animated film)/i.test(queryText(query))) return [];
-  return BLENDER.map((x) => item(x.id, x.title, x.year, x.poster, 'blender', x.license));
+  return BLENDER.map((x) => item(x.id, x.title, x.year, x.poster, 'blender', x.license, { canonicalUrl: 'https://studio.blender.org/films/', rightsUrl: x.licenseUrl || 'https://studio.blender.org/terms-and-conditions/' }));
 }
 async function blenderTitle(id) {
   if (!BLENDER.some((x) => x.id === id)) throw new Error('Unknown Blender Open Movie asset');
@@ -146,7 +174,7 @@ async function blenderTitle(id) {
   const video = matches.find(validHttp);
   if (!video) throw new Error('Blender asset did not return a current signed MP4');
   const found = BLENDER.find((x) => x.id === id);
-  return { ...item(found.id, found.title, found.year, found.poster, 'blender', found.license), rightsUrl: found.licenseUrl, overview: 'Official Blender Open Movie asset. Preserve the project attribution and credit scroll.', episodes: [], media: [{ url: video, kind: 'file', headers: { referer: 'https://studio.blender.org/' } }] };
+  return { ...item(found.id, found.title, found.year, found.poster, 'blender', found.license, { canonicalUrl: 'https://studio.blender.org/films/', rightsUrl: found.licenseUrl || 'https://studio.blender.org/terms-and-conditions/', quality: { label: 'unknown' } }), overview: 'Official Blender Open Movie asset. Preserve the project attribution and credit scroll.', episodes: [], media: [{ url: video, kind: 'file', headers: { referer: 'https://studio.blender.org/' } }] };
 }
 
 export function isOpenMediaId(id) { return /^(commons|openmovie|blender|loc|nasa):[^:]+$/i.test(String(id || '')); }
