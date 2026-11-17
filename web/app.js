@@ -362,7 +362,7 @@ async function home() {
       const rail = document.getElementById('for-you');
       if (!rail || !Array.isArray(data.results)) return;
       rail.hidden = false;
-      rail.innerHTML = renderForYouRail(data.results);
+      rail.innerHTML = renderForYouRail(data.results) + renderShortCards(data.shortResults || [], 'WeFeed picks for you');
     }).catch(() => {});
   }
   maybeRecommend();

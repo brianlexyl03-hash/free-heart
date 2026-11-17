@@ -341,16 +341,25 @@ app.post('/api/recommendations', async (req) => {
   if (!seeds.length) return { results: [], reason: 'search-or-watch-a-title-first' };
   const responses = await Promise.allSettled(seeds.map((seed) => core.search(seed, 1)));
   const seen = new Set();
+  const seenShorts = new Set();
   const results = [];
+  const shortResults = [];
   for (const response of responses) {
     if (response.status !== 'fulfilled') continue;
     for (const item of response.value.results || []) {
-      if (seen.has(item.id) || results.length >= 6) continue;
-      seen.add(item.id);
-      results.push(item);
+      const isShort = Boolean(item?.isShort) || /^wefeedshort:/i.test(String(item?.id || '')) || String(item?.source || '').toLowerCase() === 'wefeed';
+      if (isShort) {
+        if (seenShorts.has(item.id) || shortResults.length >= 6) continue;
+        seenShorts.add(item.id);
+        shortResults.push(item);
+      } else {
+        if (seen.has(item.id) || results.length >= 6) continue;
+        seen.add(item.id);
+        results.push(item);
+      }
     }
   }
-  return { results, generatedAt: new Date().toISOString() };
+  return { results, shortResults, generatedAt: new Date().toISOString() };
 });
 
 app.get('/api/upstream-status', async () => {
