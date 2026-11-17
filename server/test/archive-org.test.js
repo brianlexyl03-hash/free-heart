@@ -6,6 +6,14 @@ test('maps archive movie documents to Free Heart movie cards', () => {
   assert.deepEqual(mapArchiveDoc({ identifier: 'sample_film', title: 'Sample Film', year: 1931 }), {
     id: 'archive:sample_film', title: 'Sample Film', year: '1931',
     poster: 'https://archive.org/services/img/sample_film', type: 'movie',
+    rights: 'Internet Archive item-level rights/license review required; verify before redistribution.',
+    rightsStatus: 'review-required',
+    rightsBasis: 'item-level Internet Archive metadata; uploader rights are not independently verified',
+    rightsUrl: 'https://archive.org/details/sample_film',
+    canonicalUrl: 'https://archive.org/details/sample_film',
+    attribution: null,
+    quality: { label: 'unknown' },
+    availability: 'source-hosted',
   });
   assert.equal(mapArchiveDoc({ identifier: '../bad', title: 'Bad' }), null);
 });
@@ -49,6 +57,9 @@ test('loads title metadata and resolves direct downloadable media', async () => 
   });
   const title = await getArchiveTitle('sample_film', fetcher);
   assert.equal(title.title, 'Sample Film');
+  assert.equal(title.rightsStatus, 'review-required');
+  assert.equal(title.canonicalUrl, 'https://archive.org/details/sample_film');
+  assert.equal(title.availability, 'source-hosted');
   const resolved = await resolveArchive('sample_film', fetcher);
   assert.equal(resolved.streams.length, 1);
   assert.equal(resolved.streams[0].url, 'https://archive.org/download/sample_film/sample_720p.mp4');

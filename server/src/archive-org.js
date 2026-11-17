@@ -23,14 +23,32 @@ function poster(identifier) {
   return `${API}/services/img/${encodeURIComponent(identifier)}`;
 }
 
+function archiveMetadata(meta = {}) {
+  const rights = descriptionText(meta.rights || meta.license || '') || null;
+  const creator = descriptionText(meta.creator || meta.contributor || '') || null;
+  const canonicalUrl = `${API}/details/${encodeURIComponent(String(meta.identifier || ''))}`;
+  return {
+    rights: rights || 'Internet Archive item-level rights/license review required; verify before redistribution.',
+    rightsStatus: 'review-required',
+    rightsBasis: 'item-level Internet Archive metadata; uploader rights are not independently verified',
+    rightsUrl: canonicalUrl,
+    canonicalUrl,
+    attribution: creator,
+    quality: { label: 'unknown' },
+    availability: 'source-hosted',
+  };
+}
+
 export function mapArchiveDoc(doc) {
   if (!doc || !validIdentifier(doc.identifier) || !String(doc.title || '').trim()) return null;
+  const metadata = archiveMetadata({ ...doc, identifier: doc.identifier });
   return {
     id: `archive:${doc.identifier}`,
     title: String(doc.title).trim().slice(0, 240),
     year: doc.year == null ? null : String(doc.year).slice(0, 4),
     poster: poster(doc.identifier),
     type: 'movie',
+    ...metadata,
   };
 }
 
@@ -90,6 +108,7 @@ export async function getArchiveTitle(identifier, fetcher = fetch) {
   const data = await getJson(`${API}/metadata/${encodeURIComponent(identifier)}`, fetcher);
   const meta = data?.metadata || {};
   if (!meta.title) throw new Error('Internet Archive item was not found');
+  const metadata = archiveMetadata({ ...meta, identifier });
   return store(key, {
     id: `archive:${identifier}`,
     title: String(meta.title).slice(0, 240),
@@ -98,6 +117,7 @@ export async function getArchiveTitle(identifier, fetcher = fetch) {
     type: 'movie',
     overview: descriptionText(meta.description) || null,
     episodes: [],
+    ...metadata,
   });
 }
 
