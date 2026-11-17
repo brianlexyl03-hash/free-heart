@@ -75,12 +75,26 @@ async function locTitle(id) {
     return { ...item(id, x.title, x.year, '', 'loc', x.rights), overview: 'National Screening Room film from the Library of Congress.', episodes: [], media: [{ url: x.media, kind: 'file', headers: { referer: 'https://www.loc.gov/item/00694131/' } }] };
   }
   const data = await json(`https://www.loc.gov/item/${encodeURIComponent(id)}/?fo=json`);
-  const rights = clean(data?.rights || data?.notes || data?.description);
+  const record = data?.item && typeof data.item === 'object' ? data.item : data;
+  const rights = clean([
+    record?.rights,
+    record?.rights_advisory,
+    record?.restriction,
+    record?.access_advisory,
+    data?.rights,
+    data?.notes,
+  ].filter(Boolean).join(' | '));
   if (/permission|required|copyrighted|restricted/i.test(rights) && !/public domain|no known restrictions|free to use/i.test(rights)) throw new Error('Library of Congress item requires rights review');
   const resources = Array.isArray(data?.resources) ? data.resources : [];
-  const video = resources.map((r) => r.video || r.url).find((u) => validHttp(u) && /\.mp4(?:$|\?)/i.test(u));
+  const candidates = resources.flatMap((resource) => [
+    resource?.video,
+    resource?.video_stream,
+    resource?.url,
+    ...(Array.isArray(resource?.files) ? resource.files.flatMap((file) => [file?.video, file?.video_stream, file?.url, file?.download, file?.filename]) : []),
+  ]).filter((value) => typeof value === 'string');
+  const video = candidates.find((u) => validHttp(u) && /\.mp4(?:$|\?)/i.test(u));
   if (!video) throw new Error('Library of Congress item has no direct MP4');
-  return { ...item(id, data.title, data.date, data.image_url, 'loc', rights || 'National Screening Room; item-level review'), overview: clean(data.description) || null, episodes: [], media: [{ url: video, kind: 'file', headers: { referer: `https://www.loc.gov/item/${encodeURIComponent(id)}/` } }] };
+  return { ...item(id, record?.title || data.title, record?.date || data.date, record?.image_url || data.image_url, 'loc', rights || 'National Screening Room; item-level review'), overview: clean(record?.description || data.description) || null, episodes: [], media: [{ url: video, kind: 'file', headers: { referer: `https://www.loc.gov/item/${encodeURIComponent(id)}/` } }] };
 }
 
 async function searchNasa(query, page) {
@@ -98,7 +112,7 @@ async function nasaTitle(id) {
   return { ...found, overview: null, episodes: [], media: [{ url: video, kind: 'file', headers: { referer: 'https://images.nasa.gov' } }] };
 }
 
-const BLENDER = [{ id: '1065', title: 'Sintel', year: '2010', poster: '', license: 'Blender Open Movie; verify project CC license before reuse' }];
+const BLENDER = [{ id: '1065', title: 'Elephants Dream', year: '2006', poster: '', license: 'CC BY 2.5; preserve the Elephants Dream credit scroll and attribution', licenseUrl: 'https://orange.blender.org/blog/creative-commons-license-2/' }];
 const OPEN_MOVIES = [
   ['40108642', 'Big Buck Bunny 4K', '2008', 'Big Buck Bunny 4K.webm'],
   ['77900952', 'Spring', '2019', 'Spring - Blender Open Movie.webm'],
@@ -120,17 +134,19 @@ async function openMovieTitle(id) {
 }
 
 async function searchBlender(query) {
-  if (!/(sintel|blender|open movie|animated film)/i.test(queryText(query))) return [];
+  if (!/(elephants dream|blender|open movie|animated film)/i.test(queryText(query))) return [];
   return BLENDER.map((x) => item(x.id, x.title, x.year, x.poster, 'blender', x.license));
 }
 async function blenderTitle(id) {
   if (!BLENDER.some((x) => x.id === id)) throw new Error('Unknown Blender Open Movie asset');
-  const html = await (await fetch(`https://studio.blender.org/projects/api/assets/${encodeURIComponent(id)}/?site_context=featured_artwork`, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(12000) })).text();
+  const response = await fetch(`https://studio.blender.org/projects/api/assets/${encodeURIComponent(id)}/?site_context=featured_artwork`, { headers: { accept: 'text/html', 'user-agent': UA }, signal: AbortSignal.timeout(12000) });
+  if (!response.ok || !/text\/html/i.test(String(response.headers.get('content-type') || ''))) throw new Error(`Blender asset endpoint returned HTTP ${response.status}`);
+  const html = await response.text();
   const matches = [...html.matchAll(/https:\/\/studio\.blender\.org\/files\/[^"'&<> ]+?\.mp4\?[^"'<> ]+/g)].map((m) => m[0].replace(/&amp;/g, '&'));
   const video = matches.find(validHttp);
   if (!video) throw new Error('Blender asset did not return a current signed MP4');
   const found = BLENDER.find((x) => x.id === id);
-  return { ...item(found.id, found.title, found.year, found.poster, 'blender', found.license), overview: 'Official Blender Open Movie asset. Preserve the project attribution and verify its current license before redistribution.', episodes: [], media: [{ url: video, kind: 'file', headers: { referer: 'https://studio.blender.org/' } }] };
+  return { ...item(found.id, found.title, found.year, found.poster, 'blender', found.license), rightsUrl: found.licenseUrl, overview: 'Official Blender Open Movie asset. Preserve the project attribution and credit scroll.', episodes: [], media: [{ url: video, kind: 'file', headers: { referer: 'https://studio.blender.org/' } }] };
 }
 
 export function isOpenMediaId(id) { return /^(commons|openmovie|blender|loc|nasa):[^:]+$/i.test(String(id || '')); }
