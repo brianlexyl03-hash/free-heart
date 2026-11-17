@@ -242,12 +242,13 @@ function remuxExt(u) { try { return /\.(mpd|mkv|avi|mov|ts|flv|wmv)$/i.test(new 
 function mintFor(url, headers = {}) { const m = mint(url, headers); return remuxExt(url) ? m.replace('/api/stream/', '/api/play/') : m; }
 
 app.get('/api/health', async () => {
-  if (!core.enabled()) return { ok: true, core: false };
+  const build = String(process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || '').slice(0, 40) || null;
+  if (!core.enabled()) return { ok: true, core: false, build };
   try {
     const status = await core.health();
-    return { ok: true, core: status.ok, provider: status.core };
+    return { ok: true, core: status.ok, provider: status.core, build };
   } catch {
-    return { ok: true, core: false };
+    return { ok: true, core: false, build };
   }
 });
 
