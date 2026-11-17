@@ -8,6 +8,7 @@ const fmt = (n) => n > 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${(n / 1e6).toFixed
 const titleUrl = (id) => `/title/${encodeURIComponent(id)}`;
 const TASTE_KEY = 'free.taste.v1';
 const NOTICE_KEY = 'free.notice.v1';
+const CONTINUE_KEY = 'free.continue.v1';
 let activeShortsFeed = null;
 let installPromptEvent = null;
 
@@ -50,6 +51,32 @@ function noticeState() {
 
 function saveNoticeState(value) {
   localStorage.setItem(NOTICE_KEY, JSON.stringify(value));
+}
+
+function continueItems() {
+  try { return JSON.parse(localStorage.getItem(CONTINUE_KEY) || '[]').filter((item) => item?.id).slice(0, 12); } catch { return []; }
+}
+
+function saveContinue(item) {
+  try {
+    const next = [item, ...continueItems().filter((old) => old.id !== item.id || (old.episode || '') !== (item.episode || ''))].slice(0, 12);
+    localStorage.setItem(CONTINUE_KEY, JSON.stringify(next));
+  } catch { /* private mode or storage quota */ }
+}
+
+function removeContinue(id, episode = '') {
+  try { localStorage.setItem(CONTINUE_KEY, JSON.stringify(continueItems().filter((item) => item.id !== id || (item.episode || '') !== episode))); } catch { /* ignore */ }
+}
+
+function renderContinueRail(items) {
+  if (!items.length) return '';
+  const cards = items.map((item) => `<a class="continue-card" href="#/watch/${encodeURIComponent(item.id)}${item.episode ? `?ep=${encodeURIComponent(item.episode)}` : ''}"><span class="continue-poster">${item.poster ? `<img loading="lazy" src="${esc(item.poster)}" alt="">` : '<span class="poster-placeholder"></span>'}<i>▶</i></span><b>${esc(item.title)}</b><small>${esc(item.episodeLabel || 'Resume watching')}</small><span class="continue-progress"><i style="width:${Math.min(96, Math.max(4, Number(item.progress || 0)))}%"></i></span></a>`).join('');
+  return `<section class="content-section home-rail continue-rail"><div class="row-heading"><h2>Continue watching</h2><button class="rail-clear ghost" id="clear-continue">Clear</button></div><div class="continue-row">${cards}</div></section>`;
+}
+
+function renderForYouRail(items) {
+  const eligible = (items || []).filter((item) => !isShortItem(item)).slice(0, 6);
+  return eligible.length ? `<section class="content-section home-rail for-you-rail"><div class="row-heading"><h2>Picked for you</h2><span>Based on your searches · stays on this device</span></div>${renderCards(eligible)}</section>` : '';
 }
 
 async function enableNotifications() {
@@ -256,9 +283,11 @@ function renderUniversalResults(data, query) {
 }
 
 async function home() {
-  app.innerHTML = `<section class="hero"><div class="hero-copy"><span class="eyebrow">Your next obsession</span><h1>Watch something<br><em>unforgettable.</em></h1><p>Search movies, live news, people, and the web.</p><div class="search-shell"><span>⌕</span><input id="q" type="search" placeholder="Search Cristiano Ronaldo, Inception…" autocomplete="off"></div><div class="hero-actions"><button id="notify-me" class="ghost notify-button">⌁ Notify me of picks</button><button data-install-app class="ghost notify-button" ${installPromptEvent ? '' : 'hidden'}>＋ Install app</button><button id="share-free" class="ghost notify-button">↗ Share free</button></div><button id="mature-mode" class="ghost notify-button"></button></div></section><section id="results" class="content-section"><div class="row-heading"><h2>Find your next story</h2><span>Search movies, news, and web results</span></div><div class="notice">Start typing a person, headline, movie, or team.</div></section>`;
+  const continuation = continueItems();
+  app.innerHTML = `<section class="hero"><div class="hero-copy"><span class="eyebrow">Your next obsession</span><h1>Watch something<br><em>unforgettable.</em></h1><p>Search movies, live news, people, and the web.</p><div class="search-shell"><span>⌕</span><input id="q" type="search" placeholder="Search Cristiano Ronaldo, Inception…" autocomplete="off"></div><div class="hero-actions"><button id="notify-me" class="ghost notify-button">⌁ Notify me of picks</button><button data-install-app class="ghost notify-button" ${installPromptEvent ? '' : 'hidden'}>＋ Install app</button><button id="share-free" class="ghost notify-button">↗ Share free</button></div><button id="mature-mode" class="ghost notify-button"></button></div></section>${renderContinueRail(continuation)}<section id="for-you" hidden></section><section id="results" class="content-section"><div class="row-heading"><h2>Find your next story</h2><span>Search movies, news, people, and the web</span></div><div class="notice">Start typing a person, headline, movie, or team.</div></section>`;
   const input = document.getElementById('q');
   const results = document.getElementById('results');
+  document.getElementById('clear-continue')?.addEventListener('click', () => { localStorage.removeItem(CONTINUE_KEY); document.querySelector('.continue-rail')?.remove(); });
   document.getElementById('notify-me').onclick = async (event) => { event.currentTarget.textContent = (await enableNotifications()) ? '✓ Picks enabled' : 'Notifications blocked'; };
   document.querySelector('[data-install-app]')?.addEventListener('click', async (event) => { event.currentTarget.textContent = (await installApp()) ? '✓ Installed' : 'Install unavailable'; });
   document.getElementById('share-free').onclick = async (event) => { event.currentTarget.textContent = (await shareFreeHeart()) ? '✓ Link ready' : 'Share cancelled'; setTimeout(() => { event.currentTarget.textContent = '↗ Share free'; }, 2200); };
@@ -326,6 +355,14 @@ async function home() {
   paintMode();
   modeBtn.onclick = () => { setMode(getMode() === 'hide' ? 'label' : 'hide'); paintMode(); if (input.value.trim()) search(); };
   input.focus();
+  if (tasteSeeds().length) {
+    api('/api/recommendations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seeds: tasteSeeds() }) }).then((data) => {
+      const rail = document.getElementById('for-you');
+      if (!rail || !Array.isArray(data.results)) return;
+      rail.hidden = false;
+      rail.innerHTML = renderForYouRail(data.results);
+    }).catch(() => {});
+  }
   maybeRecommend();
   checkUpstreamUpdate();
 }
@@ -555,6 +592,7 @@ async function watchPage(id, episode) {
     app.innerHTML = `<div class="player-top"><a href="${titleUrl(id)}" class="back">← Back to title</a><span class="player-badge">${resolved.kind === 'hls' ? 'LIVE STREAM' : 'STREAMING'}</span></div><div id="vp-host" class="vp-host"></div><div class="player-controls"><div><span class="eyebrow">Now playing</span><h2>${esc(title)}</h2></div>${qualitySelect(capLadder(resolved.resolutions, profile), res)}</div><div id="player-message" class="notice subtle">${playerHint(resolved.kind)}</div><div id="clip-editor"></div>`;
     const message = document.getElementById('player-message');
     const posKey = `free.pos.${id}|${episode || ''}`;
+    const resumeItem = { id, title: meta?.title || title, poster: meta?.poster || '', episode: episode || '', episodeLabel: epLabel || '', progress: 0, updatedAt: Date.now() };
     const subs = (r) => (r.subtitles || []).map((s) => ({ src: s.src, label: s.label, srclang: subtitleCode(s.lang) }));
     let vp;
     let watchedMs = 0;
@@ -587,7 +625,13 @@ async function watchPage(id, episode) {
       src: resolved.stream, title, kind: resolved.kind, allowShortMedia: false, tracks: subs(resolved), qualities: capLadder(resolved.resolutions, profile), selectedQuality: res,
       startAt: Number(localStorage.getItem(posKey) || 0),
       onProgress: async (t, d) => {
-        try { if (Number.isFinite(d) && d - t < 60) localStorage.removeItem(posKey); else localStorage.setItem(posKey, String(Math.floor(t))); } catch { /* ignore */ }
+        try {
+          if (Number.isFinite(d) && d - t < 60) { localStorage.removeItem(posKey); removeContinue(id, episode || ''); }
+          else {
+            localStorage.setItem(posKey, String(Math.floor(t)));
+            saveContinue({ ...resumeItem, progress: Number.isFinite(d) && d > 0 ? Math.round((t / d) * 100) : 8, updatedAt: Date.now() });
+          }
+        } catch { /* ignore */ }
         if (autoQuality && Date.now() - lastAdapt > ABR_CONFIG.abrSwitchInterval && vp?.video?.buffered?.length) {
           const v = vp.video; let end = 0;
           for (let i = 0; i < v.buffered.length; i += 1) if (v.buffered.start(i) <= t + 0.5) end = Math.max(end, v.buffered.end(i));
