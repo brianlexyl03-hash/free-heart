@@ -184,14 +184,18 @@ function mintSmart(url, headers, kind, res, targetResolution, expectedDuration) 
   // a single-variant HLS response has no browser-selectable 1080p–360p ladder.
   return kind !== 'hls' || targetResolution ? m.replace('/api/stream/', '/api/remux/') : m;
 }
-async function passesRuntimeCheck(candidate, expectedDuration) {
+const FULL_MEDIA_MIN_SECONDS = Math.max(31, Number(process.env.FULL_MEDIA_MIN_SECONDS) || 45);
+async function passesRuntimeCheck(candidate, expectedDuration, allowShortMedia = false) {
   if (!haveFfmpeg()) return true;
   const info = await probe(candidate.url, candidate.headers || {}, 5000);
   // A probe timeout is unknown, not proof that a valid signed CDN URL is bad.
   if (!info) return true;
   if (!info.video || !Number.isFinite(info.duration) || info.duration <= 0) return false;
-  if (info.duration >= 8 && info.duration <= 30) return false;
-  if (expectedDuration && info.duration < Math.max(45, expectedDuration * 0.45)) return false;
+  // A full movie/episode that lasts only a few seconds is almost always an
+  // ad, update clip, or redirect interstitial. Reject it before minting a
+  // browser token so the resolver can continue to the next mirror.
+  if (!allowShortMedia && info.duration < FULL_MEDIA_MIN_SECONDS) return false;
+  if (!allowShortMedia && expectedDuration && info.duration < Math.max(45, expectedDuration * 0.45)) return false;
   return true;
 }
 function authorizedManifestUrls() {
@@ -481,12 +485,13 @@ app.post('/api/resolve', { config: { rateLimit: { max: 90, timeWindow: '1 minute
   ];
   if (!sourceCandidates.length && coreError) throw coreError;
   if (!sourceCandidates.length) throw new CoreClientError(404, 'no_playable_stream', 'No directly playable media was found for this title.');
+  const allowShortMedia = isArchive || isOpenMedia || /^wefeedshort:/i.test(b.id);
   req.log.info({ wanted: b.resolution, selected: r?.selectedResolution, kind: r?.kind, coreCandidates: r?.candidates?.length || 0, authorizedCandidates: scraped.streams.length, archive: isArchive, openMedia: isOpenMedia }, 'resolve debug');
   const checkedCandidates = (await Promise.all(sourceCandidates.map(async (candidate) => ({
     candidate,
-    valid: await passesRuntimeCheck(candidate, r?.expectedDurationSeconds),
+    valid: await passesRuntimeCheck(candidate, r?.expectedDurationSeconds, allowShortMedia),
   })))).filter((item) => item.valid).map((item) => item.candidate);
-  if (!checkedCandidates.length) throw new CoreClientError(502, 'no_verified_media', 'No source passed video and runtime verification.');
+  if (!checkedCandidates.length) throw new CoreClientError(502, 'no_verified_media', 'No source passed video and runtime verification; short ad or interstitial clips were rejected.');
   const candidates = checkedCandidates.map((candidate) => ({
     kind: candidate.kind,
     stream: mintSmart(candidate.url, candidate.headers, candidate.kind, r?.selectedResolution || 0, b.resolution ?? null, r?.expectedDurationSeconds ?? null),
@@ -522,8 +527,8 @@ app.post('/api/verify', { config: { rateLimit: { max: 180, timeWindow: '1 minute
   // false "ad-only" verdict; the streamed response is still checked below
   // by the downloader for HTML, empty data, and tiny non-video payloads.
   if (!info) return { verified: null, playable: null, reason: 'probe_inconclusive' };
-  const shortInterstitial = !body.allowShortMedia && Number.isFinite(info?.duration) && info.duration >= 8 && info.duration <= 30;
-  const runtimeMismatch = entry.expectedDuration && Number.isFinite(info?.duration)
+  const shortInterstitial = !body.allowShortMedia && Number.isFinite(info?.duration) && info.duration < FULL_MEDIA_MIN_SECONDS;
+  const runtimeMismatch = !body.allowShortMedia && entry.expectedDuration && Number.isFinite(info?.duration)
     && info.duration < Math.max(45, entry.expectedDuration * 0.45);
   const playable = Boolean(info?.video) && Number.isFinite(info?.duration) && info.duration > 0 && !shortInterstitial && !runtimeMismatch;
   return {
