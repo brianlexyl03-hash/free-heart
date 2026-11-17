@@ -258,13 +258,18 @@ function renderCards(items, heading = '', sponsor = null) {
   if (!shown.length) return `<div class="notice">${hidden ? '' : 'No titles found.'}</div>${note}`;
   const card = (item) => {
     const m = matureInfo(item);
-    const source = item.source && item.source !== 'wefeed' ? String(item.source).replace(/([a-z])([A-Z])/g, '$1 $2') : '';
+    const source = itemSource(item);
     return `<a class="poster-card ${m.mature ? 'mature' : ''}" href="${titleUrl(item.id)}"><div class="poster-wrap">${item.poster ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(item.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}${m.mature ? '<span class="age-tag">18+</span>' : ''}<span class="play-dot">▶</span></div><strong>${esc(item.title)}</strong><small>${esc(item.year || '')}${item.type ? ` · ${esc(item.type)}` : ''}${source ? ` · ${esc(source)}` : ''}</small></a>`;
   };
   const cards = shown.map((item, index) => `${sponsor && index > 0 && index % 8 === 0 ? renderSponsoredCard(sponsor) : ''}${card(item)}`).join('');
   return `${heading ? `<div class="row-heading"><h2>${esc(heading)}</h2><span>${shown.length} titles</span></div>` : ''}<div class="poster-row">${cards}</div>${note}`;
 }
 function isShortItem(item) { return Boolean(item?.isShort) || /^wefeedshort:/i.test(String(item?.id || '')) || String(item?.source || '').toLowerCase() === 'wefeed'; }
+function itemSource(item) {
+  const raw = String(item?.source || String(item?.id || '').split(':', 1)[0] || '').toLowerCase();
+  if (!raw || raw === 'wefeed') return '';
+  return raw.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
 function renderShortCards(items, heading = 'WeFeed short dramas') {
   const shown = (items || []).filter((item) => getMode() !== 'hide' || !matureInfo(item).mature);
   if (!shown.length) return '';
@@ -460,7 +465,7 @@ async function titlePage(id) {
     let season = [...seasons.keys()][0];
     let current = isSeries ? seasons.get(season)[0].key : null;
     const seasonSelect = seasons.size > 1 ? `<label class="episode-picker">Season<select id="season">${[...seasons.entries()].map(([n, l]) => `<option value="${n}">Season ${n} · ${l.length} ep</option>`).join('')}</select></label>` : '';
-    const sourceLabel = data.isShort ? 'WeFeed · Short drama' : `${data.source || 'Verified catalogue'} · ${data.type || 'Feature'}`;
+    const sourceLabel = data.isShort || /^wefeedshort:/i.test(String(id)) ? 'WeFeed · Short drama' : `${itemSource({ ...data, id }) || 'Verified catalogue'} · ${data.type || 'Feature'}`;
     app.innerHTML = `<section class="detail-hero" style="--poster:url('${esc(data.poster || '')}')"><div class="detail-poster">${data.poster ? `<img src="${esc(data.poster)}" alt="">` : '<div class="poster-placeholder"></div>'}</div><div class="detail-copy"><span class="eyebrow">${esc(sourceLabel)}</span><h1>${esc(data.title)}</h1><div class="meta"><span>${esc(data.year || '')}</span><span>HD</span>${mi.mature ? '<span class="age-chip">18+</span>' : '<span>Not rated</span>'}${isSeries ? `<span>${seasons.size} season${seasons.size > 1 ? 's' : ''} · ${episodes.length} episodes</span>` : ''}</div>${mi.mature ? `<div class="advisory"><b>18+</b><span>${esc(mi.reasons.join(' · '))}</span></div>` : ''}<p>${esc(data.overview || 'A new story is waiting for you.')}</p><button id="flag-18" class="linkish">${mi.mature ? 'Not 18+? Remove the label' : 'Mark this title as 18+'}</button><div class="actions"><button id="play" class="primary">▶ Play</button><button id="download" class="secondary">⇩ Download</button></div><div id="title-status"></div></div></section>${isSeries ? `<section class="content-section"><div class="row-heading"><h2>Episodes</h2>${seasonSelect}</div><div id="episodes" class="ep-list"></div></section>` : ''}<section class="content-section"><div class="row-heading"><h2>More details</h2></div><div class="detail-facts"><span><b>Title</b>${esc(data.title)}</span><span><b>Format</b>${esc(data.type || 'Movie')}</span><span><b>Source</b>${esc(sourceLabel)}</span><span><b>Offline</b>Private browser storage</span></div></section>`;
     const status = document.getElementById('title-status');
     const playBtn = document.getElementById('play');
