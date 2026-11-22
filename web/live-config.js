@@ -13,6 +13,7 @@ window.__FREE_LIVE_CONFIG = {
     { id: 'willow', name: 'Willow by Cricbuzz', sport: 'Live cricket', region: 'USA and Canada', url: 'https://www.willow.tv/' },
     { id: 'fox-cricket', name: 'FOX Cricket', sport: 'Australian cricket', region: 'Australia and authorised partners', url: 'https://www.foxsports.com.au/cricket-' },
     { id: 'france24', name: 'France 24', sport: 'Live news and sport coverage', region: 'France / international service', url: 'https://www.france24.com/en/live' },
+    { id: 'cgtn', name: 'CGTN Documentary', sport: 'International documentary news', region: 'International service', url: 'https://www.cgtn.com/tv' },
     { id: 'red-bull-tv', name: 'Red Bull TV', sport: 'Live sport and events', region: 'Austria / international service', url: 'https://www.redbull.com/int-en/tv' },
     { id: 'cazetv', name: 'CazéTV', sport: 'Brazilian football and live sport', region: 'Brazil / rights-holder schedule', url: 'https://www.youtube.com/@CazeTV' },
   ],       // "kicks off soon" reminder for followed matches

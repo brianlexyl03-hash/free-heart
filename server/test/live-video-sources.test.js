@@ -59,6 +59,9 @@ test('includes supplied direct HLS channels in the default catalog', () => {
   const channels = parseLiveChannelSources();
   const france = channels.find((x) => x.id === 'france-24');
   const redBull = channels.find((x) => x.id === 'red-bull-tv');
+  const cgtn = channels.find((x) => x.id === 'cgtn');
   assert.equal(france.sources.some((x) => x.kind === 'hls' && x.status === 'configured'), true);
+  assert.equal(france.sources.filter((x) => x.kind === 'hls').length, 4);
   assert.equal(redBull.sources.some((x) => x.kind === 'hls' && x.status === 'configured'), true);
+  assert.equal(cgtn.sources.some((x) => x.kind === 'hls' && x.status === 'configured'), true);
 });

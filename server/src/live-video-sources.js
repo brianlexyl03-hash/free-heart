@@ -2,8 +2,12 @@ const HTTP = new Set(['http:', 'https:']);
 const ID = /^[a-z0-9][a-z0-9._-]{0,49}$/i;
 const DEFAULT_FEEDS = {
   'live-news': [
-    { url: 'https://www.youtube.com/embed/live_stream?channel=UCQfwfsi5VrQ8yKZ-UWmAEFg', kind: 'iframe', provider: 'France 24', cc: 'FR', rights: 'broadcaster-embed' },
-    { url: 'https://static.france24.com/live/F24_EN_LO_HLS/live_web.m3u8', kind: 'hls', provider: 'France 24', cc: 'FR', rights: 'broadcaster-direct' },
+    { id: 'fr24-en', label: 'France 24 English', url: 'https://www.youtube.com/embed/live_stream?channel=UCQfwfsi5VrQ8yKZ-UWmAEFg', kind: 'iframe', provider: 'France 24', cc: 'FR', rights: 'broadcaster-embed' },
+    { id: 'fr24-en-hls', label: 'France 24 English HLS', url: 'https://static.france24.com/live/F24_EN_LO_HLS/live_web.m3u8', kind: 'hls', provider: 'France 24', cc: 'FR', rights: 'broadcaster-direct' },
+    { id: 'fr24-fr-hls', label: 'France 24 Français HLS', url: 'https://static.france24.com/live/F24_FR_LO_HLS/live_web.m3u8', kind: 'hls', provider: 'France 24', cc: 'FR', rights: 'broadcaster-direct' },
+    { id: 'fr24-ar-hls', label: 'France 24 Arabic HLS', url: 'https://static.france24.com/live/F24_AR_LO_HLS/live_web.m3u8', kind: 'hls', provider: 'France 24', cc: 'FR', rights: 'broadcaster-direct' },
+    { id: 'fr24-es-hls', label: 'France 24 Español HLS', url: 'https://static.france24.com/live/F24_ES_LO_HLS/live_web.m3u8', kind: 'hls', provider: 'France 24', cc: 'FR', rights: 'broadcaster-direct' },
+    { id: 'cgtn-doc', label: 'CGTN Documentary', url: 'https://english-livebkali.cgtn.com/live/doccgtn.m3u8', kind: 'hls', provider: 'CGTN', cc: 'CN', rights: 'broadcaster-direct' },
   ],
   'live-sport': [
     { url: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8', kind: 'hls', provider: 'Red Bull TV', cc: 'AT', rights: 'broadcaster-direct' },
