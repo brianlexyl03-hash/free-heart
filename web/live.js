@@ -240,17 +240,26 @@ function renderChannels() {
   root.querySelector('#lv-channels').innerHTML = channels.length ? `<div class="lv-channel-heading"><b>Official live channels</b><span>Play authorized direct feeds inside Free Heart</span></div><div class="lv-channel-row">${channels.map((c) => `<button class="lv-channel" data-channel-playback="${esc(c.id)}" aria-label="Play ${esc(c.name)} in Free Heart"><span class="lv-channel-mark">${esc(c.name.split(/\s+/).map((x) => x[0]).join('').slice(0, 3))}</span><span><b>${esc(c.name)}</b><small>${esc(c.sport)}</small><em>${esc(c.region)}</em></span></button>`).join('')}</div>` : '';
 }
 
+function withEmbedParams(value) {
+  try { const url = new URL(value); url.searchParams.set('autoplay', '1'); url.searchParams.set('mute', '1'); url.searchParams.set('playsinline', '1'); return url.toString(); } catch { return value; }
+}
+function sourceStateHtml(source, label) {
+  if (source.state === 'PLAYABLE_HLS') return `<video class="lv-live-video" src="${esc(source.stream)}" controls playsinline autoplay muted preload="metadata" oncanplay="this.play().catch(()=>{})"></video>`;
+  if (source.state === 'PLAYABLE_IFRAME') return `<iframe class="lv-live-frame" key="${esc(source.src)}" src="${esc(withEmbedParams(source.src))}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="origin"></iframe>`;
+  const link = source.providerUrl ? ` <a href="${esc(source.providerUrl)}" target="_blank" rel="noreferrer">Watch on provider</a>` : '';
+  return `<div class="lv-playback-state ${esc(source.state)}"><h3>${esc(source.state === 'GEO_BLOCKED' ? `Available in ${source.cc || 'provider region'} only` : source.message || 'Live video unavailable')}</h3><p>${esc(source.message || '')}${link}</p></div>`;
+}
 async function openChannelPlayback(id, label) {
   let host = document.querySelector('.lv-channel-player');
   if (!host) { host = document.createElement('div'); host.className = 'lv-channel-player'; document.body.appendChild(host); }
   host.innerHTML = `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(label)} live player"><div class="lv-sheet-top"><b>${esc(label)} · Free Heart player</b><button class="ghost" data-channel-close>Close</button></div><p>Checking the authorized direct feed…</p></div>`;
   try {
     const data = await getJson(`/api/live/channels/${encodeURIComponent(id)}/playback`, 1);
-    if (data.status !== 'available' || !data.sources?.length) throw Object.assign(new Error(data.message || 'No authorized direct feed is configured.'), { status: 404 });
-    let active = 0;
+    if (!data.sources?.length) throw Object.assign(new Error(data.message || 'No authorized feed is configured.'), { status: 404 });
+    let active = Math.max(0, data.sources.findIndex((source) => source.state === 'PLAYABLE_HLS' || source.state === 'PLAYABLE_IFRAME'));
     const draw = () => {
       const source = data.sources[active];
-      host.innerHTML = `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(label)} live player"><div class="lv-sheet-top"><b>${esc(label)} · Free Heart player</b><button class="ghost" data-channel-close>Close</button></div><video class="lv-live-video" src="${esc(source.stream)}" controls playsinline autoplay muted preload="metadata"></video><p class="lv-sheet-status">${esc(source.provider || source.label || label)} · ${esc(source.kind || 'direct feed')}</p><div class="lv-playback-sources">${data.sources.map((s, i) => `<button class="secondary ${i === active ? 'active' : ''}" data-channel-source="${i}">${esc(s.label)}</button>`).join('')}</div></div>`;
+      host.innerHTML = `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(label)} live player"><div class="lv-sheet-top"><b>${esc(label)} · Free Heart player</b><button class="ghost" data-channel-close>Close</button></div>${sourceStateHtml(source, label)}<p class="lv-sheet-status">${esc(source.provider || source.label || label)} · ${esc(source.kind || 'unknown')}</p><div class="lv-playback-sources">${data.sources.map((s, i) => `<button class="secondary ${i === active ? 'active' : ''}" data-channel-source="${i}" aria-current="${i === active}">${esc(s.label)} · ${esc(s.state)}</button>`).join('')}</div></div>`;
     };
     draw();
     host.onclick = (event) => { if (event.target.closest('[data-channel-close]')) return host.remove(); const button = event.target.closest('[data-channel-source]'); if (button) { active = Number(button.dataset.channelSource) || 0; draw(); } };

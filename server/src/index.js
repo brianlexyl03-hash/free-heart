@@ -221,7 +221,7 @@ async function runAuthorizedScraper(mediaId, mediaType, episode) {
 }
 app.get('/api/live/channels/:id/playback', async (req, reply) => {
   const id = z.string().regex(/^[a-z0-9-]{1,50}$/i).parse(req.params.id);
-  const result = getLiveChannelPlayback(liveChannelSources, id, mint);
+  const result = await getLiveChannelPlayback(liveChannelSources, id, mint);
   if (result.status !== 'available') return reply.code(404).send({ error: 'channel_unavailable', ...result });
   reply.header('cache-control', 'no-store');
   return result;
