@@ -31,6 +31,11 @@ function queryText(query) { return String(query || '').replace(/[\u0000-\u001f]/
 function validHttp(url) { try { const u = new URL(url); return u.protocol === 'https:'; } catch { return false; } }
 function ext(url) { try { return new URL(url).pathname.toLowerCase().match(/\.[a-z0-9]{2,5}$/)?.[0] || ''; } catch { return ''; } }
 function kind(url) { return /\.m3u8(?:$|\?)/i.test(url) ? 'hls' : 'file'; }
+export function isCommerciallyReusableLicense(value) {
+  const license = clean(value, 240).toLowerCase();
+  if (!license || /non[- ]?commercial|noncommercial|no[- ]?derivatives|no derivatives|fair use|all rights reserved|permission required|copyrighted|restricted|-(?:nc|nd)\b|\b(?:nc|nd)\b/.test(license)) return false;
+  return /public domain|public-domain|cc0|creative commons zero|cc by(?:[- ]?sa)?(?:\b|\s)|creative commons attribution/.test(license);
+}
 export function rightsPolicy(source) {
   const key = String(source || '').toLowerCase();
   if (key === 'commons') return { status: 'review-required', basis: 'per-file public-domain or compatible free license', sourceUrl: 'https://commons.wikimedia.org/wiki/Commons:Licensing' };
@@ -69,14 +74,14 @@ async function searchCommons(query, page) {
   return Object.values(data?.query?.pages || {}).map((p) => {
     const info = p.imageinfo?.[0]; const meta = info?.extmetadata || {};
     const mime = String(info?.mime || ''); const license = clean(meta.LicenseShortName?.value || meta.UsageTerms?.value);
-    if (!info?.url || !VIDEO_MIME.test(mime) || !/(public domain|creative commons|cc by|cc0)/i.test(license)) return null;
+    if (!info?.url || !VIDEO_MIME.test(mime) || !isCommerciallyReusableLicense(license)) return null;
     return item(String(p.pageid), String(p.title || '').replace(/^File:/, ''), meta.DateTimeOriginal?.value, '', 'commons', license, { canonicalUrl: info.descriptionurl || `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}`, rightsUrl: meta.LicenseUrl?.value || 'https://commons.wikimedia.org/wiki/Commons:Licensing', attribution: meta.Attribution?.value || meta.Artist?.value || null, quality: technicalInfo(info) });
   }).filter(Boolean);
 }
 async function commonsTitle(pageid) {
   const data = await json(`https://commons.wikimedia.org/w/api.php?action=query&format=json&pageids=${encodeURIComponent(pageid)}&prop=imageinfo&iiprop=url%7Cdescriptionurl%7Cmime%7Csize%7Cwidth%7Cheight%7Cduration%7Cextmetadata`);
   const p = Object.values(data?.query?.pages || {})[0]; const info = p?.imageinfo?.[0]; const meta = info?.extmetadata || {};
-  if (!info?.url || !VIDEO_MIME.test(String(info.mime || '')) || !/(public domain|creative commons|cc by|cc0)/i.test(clean(meta.LicenseShortName?.value || meta.UsageTerms?.value))) throw new Error('Commons item has no approved per-file license');
+  if (!info?.url || !VIDEO_MIME.test(String(info.mime || '')) || !isCommerciallyReusableLicense(meta.LicenseShortName?.value || meta.UsageTerms?.value)) throw new Error('Commons item has no approved per-file license');
   return { ...item(String(pageid), String(p.title || '').replace(/^File:/, ''), meta.DateTimeOriginal?.value, '', 'commons', meta.LicenseShortName?.value || meta.UsageTerms?.value, { canonicalUrl: info.descriptionurl || `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}`, rightsUrl: meta.LicenseUrl?.value || 'https://commons.wikimedia.org/wiki/Commons:Licensing', attribution: meta.Attribution?.value || meta.Artist?.value || null, quality: technicalInfo(info) }), overview: clean(meta.ImageDescription?.value) || null, episodes: [], media: [{ url: info.url.split('?')[0], kind: kind(info.url), headers: { referer: info.descriptionurl || `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}` } }] };
 }
 

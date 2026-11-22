@@ -15,6 +15,7 @@ import { searchArchive, getArchiveTitle, resolveArchive } from './archive-org.js
 import { searchOpenMedia, getOpenMediaTitle, resolveOpenMedia, isOpenMediaId } from './open-media-sources.js';
 import { registerLiveScores } from './live-scores.js';
 import { registerLiveAlerts, startLiveAlerts } from './live-alerts.js';
+import { parseLiveChannelSources, getLiveChannelPlayback } from './live-video-sources.js';
 import { hasSubscription, registerPushRoutes, sendToEndpoint, sendToEndpoints } from './push-notifications.js';
 import { startAutomaticPush } from './auto-push.js';
 import { getNews, getNewsArticle, getNewsSitemapItems, rankNewsForQuery, startNewsRefresh } from './news-service.js';
@@ -144,13 +145,7 @@ const TTL = 6 * 60 * 60 * 1000; // long enough for full movies; refreshed on eve
 setInterval(() => { const n = Date.now(); for (const [k, v] of tokens) if (v.exp < n) tokens.delete(k); }, 60000).unref();
 // Provider signing headers stay in the server-side token record; none are returned to the browser.
 const ALLOWED_HDRS = new Set(['referer', 'user-agent', 'cookie', 'origin']);
-let liveChannelSources = [];
-try {
-  const parsed = JSON.parse(process.env.LIVE_CHANNEL_SOURCES_JSON || '[]');
-  liveChannelSources = Array.isArray(parsed) ? parsed : [];
-} catch {
-  liveChannelSources = [];
-}
+const liveChannelSources = parseLiveChannelSources();
 const UPSTREAM_REPO = 'mesamirh/MovieBox-TUI';
 const UPSTREAM_COMMIT = process.env.UPSTREAM_COMMIT || '';
 const SOCIAL_WHATSAPP_URL = process.env.SOCIAL_WHATSAPP_URL || '';
@@ -226,16 +221,10 @@ async function runAuthorizedScraper(mediaId, mediaType, episode) {
 }
 app.get('/api/live/channels/:id/playback', async (req, reply) => {
   const id = z.string().regex(/^[a-z0-9-]{1,50}$/i).parse(req.params.id);
-  const channel = liveChannelSources.find((item) => String(item?.id) === id);
-  const sources = (channel?.sources || []).filter((source) => {
-    try { return ['http:', 'https:'].includes(new URL(String(source?.url || '')).protocol); } catch { return false; }
-  }).map((source) => ({
-    label: String(source.label || 'Authorized source').slice(0, 80),
-    url: mint(String(source.url), source.headers || {}),
-  }));
-  if (!sources.length) return reply.code(404).send({ error: 'channel_unavailable', message: 'No authorized playback source is configured for this channel.' });
+  const result = getLiveChannelPlayback(liveChannelSources, id, mint);
+  if (result.status !== 'available') return reply.code(404).send({ error: 'channel_unavailable', ...result });
   reply.header('cache-control', 'no-store');
-  return { id, sources };
+  return result;
 });
 registerRemux(app, { tokens, TTL });
 function remuxExt(u) { try { return /\.(mpd|mkv|avi|mov|ts|flv|wmv)$/i.test(new URL(u).pathname); } catch { return false; } }

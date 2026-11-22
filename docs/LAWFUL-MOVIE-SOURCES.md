@@ -8,7 +8,7 @@ Free Heart treats these providers as **catalogue and playback sources**, not as 
 
 Commons accepts freely licensed or public-domain media, but the applicable license must be stated on the individual file description page and the author/source information must be sufficient for verification. Reusers remain responsible for non-copyright restrictions and for following the license. [1]
 
-The adapter therefore requires a per-file video MIME type and a license signal such as public domain, Creative Commons, CC BY, or CC0. It keeps the file description URL as `canonicalUrl`, uses the file's license URL as `rightsUrl` when available, and carries author/attribution metadata when published. Quality is reported only when the API provides dimensions; otherwise it remains `unknown`.
+The adapter therefore requires a per-file video MIME type and a commercially compatible license signal: public domain, CC0, CC BY, or CC BY-SA. Noncommercial, no-derivatives, fair-use, restricted, and ambiguous signals are rejected rather than published. It keeps the file description URL as `canonicalUrl`, uses the file's license URL as `rightsUrl` when available, and carries author/attribution metadata when published. Quality is reported only when the API provides dimensions; otherwise it remains `unknown`.
 
 ### Library of Congress National Screening Room
 

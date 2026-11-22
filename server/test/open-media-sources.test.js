@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getOpenMediaTitle, isOpenMediaId, qualityLabel, rightsPolicy } from '../src/open-media-sources.js';
+import { getOpenMediaTitle, isCommerciallyReusableLicense, isOpenMediaId, qualityLabel, rightsPolicy } from '../src/open-media-sources.js';
 
 test('recognizes all lawful open-media source namespaces', () => {
   for (const id of [
@@ -75,4 +75,30 @@ test('maps source dimensions to conservative quality labels', () => {
   assert.equal(qualityLabel(1920, 1080), '1080p');
   assert.equal(qualityLabel(1280, 720), '720p');
   assert.equal(qualityLabel(0, 0), 'unknown');
+});
+
+test('allows only compatible Commons license signals', () => {
+  assert.equal(isCommerciallyReusableLicense('CC BY 4.0'), true);
+  assert.equal(isCommerciallyReusableLicense('Creative Commons Attribution-ShareAlike 4.0'), true);
+  assert.equal(isCommerciallyReusableLicense('Public Domain'), true);
+  assert.equal(isCommerciallyReusableLicense('CC BY-NC 4.0'), false);
+  assert.equal(isCommerciallyReusableLicense('CC BY-ND 4.0'), false);
+  assert.equal(isCommerciallyReusableLicense('All rights reserved'), false);
+});
+
+test('prefers a documented LOC HLS resource over a progressive file', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    item: { title: 'Adaptive Film', date: '1930', rights_advisory: 'No known restrictions' },
+    resources: [
+      { video: 'https://tile.loc.gov/media/adaptive.mp4', video_stream: 'https://tile.loc.gov/media/adaptive.m3u8' },
+    ],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    const title = await getOpenMediaTitle('loc:adaptive');
+    assert.equal(title.media[0].kind, 'hls');
+    assert.equal(title.media[0].url, 'https://tile.loc.gov/media/adaptive.m3u8');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

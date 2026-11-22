@@ -33,6 +33,7 @@ const S = {
   proxyMissing: false,
   serverAlerts: false,            // true when the server is pushing alerts for us (closed-app Web Push)
   openId: null,
+  playback: new Map(),             // matchId -> { status, sources, message, active }
 };
 let ctl = null, timer = 0, tick = 0, mounted = false, root = null;
 
@@ -318,14 +319,36 @@ function officialChannelFor(label) {
   const needle = String(label || '').toLowerCase();
   return (CFG.channels || []).find((c) => [c.name, c.id].some((value) => needle.includes(String(value).toLowerCase()))) || null;
 }
+async function loadPlayback(m, channel) {
+  if (!channel?.id || S.playback.get(m.id)?.status === 'loading') return;
+  S.playback.set(m.id, { status: 'loading', sources: [], active: 0 }); renderSheet();
+  try {
+    const data = await getJson(`/api/live/channels/${encodeURIComponent(channel.id)}/playback`, 1);
+    S.playback.set(m.id, { ...data, active: 0 });
+  } catch (e) {
+    S.playback.set(m.id, { status: 'unavailable', sources: [], message: e.status === 404 ? 'The official broadcaster has not supplied an authorized playback source for this channel.' : 'The official playback service is unavailable right now.', active: 0 });
+  }
+  renderSheet();
+}
+function playbackHtml(m, channel) {
+  if (!channel) return '';
+  const p = S.playback.get(m.id);
+  if (!p) return `<section class="lv-playback"><h3>Live video</h3><p>Use the licensed ${esc(channel.name || 'official broadcaster')} service for this match.</p><button class="secondary" data-playback="${esc(channel.id)}">Check authorized playback</button></section>`;
+  if (p.status === 'loading') return '<section class="lv-playback"><h3>Live video</h3><p>Checking the official broadcaster…</p></section>';
+  if (p.status !== 'available' || !p.sources?.length) return `<section class="lv-playback unavailable"><h3>Live video unavailable</h3><p>${esc(p.message || 'No authorized playback source is configured for this channel.')}</p></section>`;
+  const active = Math.min(Number(p.active) || 0, p.sources.length - 1);
+  const src = p.sources[active]?.stream;
+  return `<section class="lv-playback"><h3>Live video · ${esc(p.sources[active]?.provider || p.sources[active]?.label || channel.name)}</h3><video class="lv-live-video" src="${esc(src)}" controls playsinline autoplay muted preload="metadata"></video><div class="lv-playback-sources" role="list">${p.sources.map((s, i) => `<button class="secondary ${i === active ? 'active' : ''}" data-stream-index="${i}" aria-current="${i === active}">${esc(s.label)}</button>`).join('')}</div></section>`;
+}
 function sheetHtml(m) {
   const ico = { goal: 'GOAL', pen: 'PEN', own: 'OWN', yellow: 'YC', red: 'RC' };
   const lab = { goal: 'Goal', pen: 'Penalty', own: 'Own goal', yellow: 'Yellow card', red: 'Red card' };
   const ev = m.events.length ? m.events.map((e) => `<li class="${e.side}"><span class="min">${esc(e.minute)}</span><span class="ic" title="${lab[e.kind]}">${ico[e.kind]}</span><span class="who">${esc(e.player || lab[e.kind])}</span></li>`).join('') : `<li class="none">${m.status === 'scheduled' ? 'Events appear here once the match starts.' : 'No goals or cards recorded.'}</li>`;
   const f = isFollowing(m);
   const tf = (t) => S.followT.has(t.id);
+  const channel = m.watch.map(officialChannelFor).find(Boolean);
   const watch = m.watch.length ? m.watch.map((w) => { const c = officialChannelFor(w); return c ? `<a href="${esc(c.url)}" target="_blank" rel="noreferrer">${esc(w)}<small>Official service</small></a>` : `<span>${esc(w)}</span>`; }).join('') : '<small>The score provider lists no broadcaster for this match. Check your local sports channel or the competition’s official app.</small>';
-  return `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(`${m.home.name} vs ${m.away.name}`)}"><div class="sheet-grab"></div><div class="lv-sheet-top"><span>${esc(m.league)} · ${esc(fmtDay(m.kickoff))}</span><button class="ghost" data-close aria-label="Close">Close</button></div><div class="lv-sheet-score"><div>${crest(m.home)}<b>${esc(m.home.name)}</b></div><strong>${m.status === 'scheduled' ? esc(fmtTime(m.kickoff)) : `${m.home.score ?? 0} – ${m.away.score ?? 0}`}</strong><div>${crest(m.away)}<b>${esc(m.away.name)}</b></div></div><p class="lv-sheet-status">${m.status === 'live' ? `<span class="lv-live"><i></i>${esc(m.detail || m.clock || 'LIVE')}</span>` : m.status === 'finished' ? 'Full time' : m.status === 'postponed' ? esc(m.detail || 'Postponed') : esc(countdown(m.kickoff))}</p><h3>Key events</h3><ul class="lv-events">${ev}</ul><h3>Where to watch</h3><div class="lv-watch">${watch}</div>${m.venue ? `<h3>Venue</h3><p class="lv-venue">${esc(m.venue)}${m.city ? ` · ${esc(m.city)}` : ''}</p>` : ''}<div class="lv-sheet-actions"><button class="primary" data-follow="${esc(m.id)}">${f && S.followM.has(m.id) ? 'Following match' : 'Follow match'}</button><button class="secondary" data-team="${esc(m.home.id)}">${tf(m.home) ? 'Following' : 'Follow'} ${esc(m.home.short || m.home.name)}</button><button class="secondary" data-team="${esc(m.away.id)}">${tf(m.away) ? 'Following' : 'Follow'} ${esc(m.away.short || m.away.name)}</button>${m.status === 'scheduled' ? '<button class="secondary" data-ics>Add to calendar</button>' : ''}<button class="ghost" data-share>Share</button></div></div>`;
+  return `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(`${m.home.name} vs ${m.away.name}`)}"><div class="sheet-grab"></div><div class="lv-sheet-top"><span>${esc(m.league)} · ${esc(fmtDay(m.kickoff))}</span><button class="ghost" data-close aria-label="Close">Close</button></div><div class="lv-sheet-score"><div>${crest(m.home)}<b>${esc(m.home.name)}</b></div><strong>${m.status === 'scheduled' ? esc(fmtTime(m.kickoff)) : `${m.home.score ?? 0} – ${m.away.score ?? 0}`}</strong><div>${crest(m.away)}<b>${esc(m.away.name)}</b></div></div><p class="lv-sheet-status">${m.status === 'live' ? `<span class="lv-live"><i></i>${esc(m.detail || m.clock || 'LIVE')}</span>` : m.status === 'finished' ? 'Full time' : m.status === 'postponed' ? esc(m.detail || 'Postponed') : esc(countdown(m.kickoff))}</p>${playbackHtml(m, channel)}<h3>Key events</h3><ul class="lv-events">${ev}</ul><h3>Where to watch</h3><div class="lv-watch">${watch}</div>${m.venue ? `<h3>Venue</h3><p class="lv-venue">${esc(m.venue)}${m.city ? ` · ${esc(m.city)}` : ''}</p>` : ''}<div class="lv-sheet-actions"><button class="primary" data-follow="${esc(m.id)}">${f && S.followM.has(m.id) ? 'Following match' : 'Follow match'}</button><button class="secondary" data-team="${esc(m.home.id)}">${tf(m.home) ? 'Following' : 'Follow'} ${esc(m.home.short || m.home.name)}</button><button class="secondary" data-team="${esc(m.away.id)}">${tf(m.away) ? 'Following' : 'Follow'} ${esc(m.away.short || m.away.name)}</button>${m.status === 'scheduled' ? '<button class="secondary" data-ics>Add to calendar</button>' : ''}<button class="ghost" data-share>Share</button></div></div>`;
 }
 function renderSheet() {
   const m = S.pool.get(S.openId);
@@ -341,6 +364,10 @@ async function onSheetClick(e) {
   if (e.target === el || e.target.closest('[data-close]')) return closeSheet();
   const m = S.pool.get(S.openId);
   if (!m) return;
+  const playback = e.target.closest('[data-playback]');
+  if (playback) return loadPlayback(m, officialChannelFor(playback.dataset.playback));
+  const streamIndex = e.target.closest('[data-stream-index]');
+  if (streamIndex) { const state = S.playback.get(m.id); if (state) { state.active = Number(streamIndex.dataset.streamIndex) || 0; renderSheet(); } return; }
   if (e.target.closest('[data-ics]')) return downloadIcs(m);
   if (e.target.closest('[data-share]')) return shareMatch(m);
   const fm = e.target.closest('[data-follow]');
