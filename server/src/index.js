@@ -242,12 +242,13 @@ function remuxExt(u) { try { return /\.(mpd|mkv|avi|mov|ts|flv|wmv)$/i.test(new 
 function mintFor(url, headers = {}) { const m = mint(url, headers); return remuxExt(url) ? m.replace('/api/stream/', '/api/play/') : m; }
 
 app.get('/api/health', async () => {
-  if (!core.enabled()) return { ok: true, core: false };
+  const build = String(process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || '').slice(0, 40) || null;
+  if (!core.enabled()) return { ok: true, core: false, build };
   try {
     const status = await core.health();
-    return { ok: true, core: status.ok, provider: status.core };
+    return { ok: true, core: status.ok, provider: status.core, build };
   } catch {
-    return { ok: true, core: false };
+    return { ok: true, core: false, build };
   }
 });
 
@@ -280,6 +281,16 @@ function mediaSearchScore(item, query) {
 function rankMediaResults(items, query) {
   return [...items].filter((item) => item?.isShort || !(/\b(trailer|teaser|clip|recap|review|reaction|highlights|promo)\b/i.test(String(item.title || '')) || String(item.type || '').toLowerCase() !== 'movie' || /openmovie|commons|archive/i.test(String(item.source || '')))).sort((a, b) => mediaSearchScore(b, query) - mediaSearchScore(a, query));
 }
+function normalizeMediaIdentity(item) {
+  if (!item || typeof item !== 'object') return item;
+  const id = String(item.id || '');
+  const provider = String(item.source || id.split(':', 1)[0] || '').trim().toLowerCase();
+  return {
+    ...item,
+    ...(provider && !item.source ? { source: provider } : {}),
+    ...(typeof item.isShort !== 'boolean' ? { isShort: /^wefeedshort:/i.test(id) || provider === 'wefeed' } : {}),
+  };
+}
 
 app.get('/api/search', async (req) => {
   const { q, page } = z.object({ q: z.string().trim().min(1).max(100), page: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
@@ -290,7 +301,7 @@ app.get('/api/search', async (req) => {
   if (coreResult.status === 'rejected' && !archiveItems.length && !openMediaItems.length && !freshNews.length) throw coreResult.reason;
   const base = coreResult.status === 'fulfilled' ? coreResult.value : { results: [], page, hasMore: false };
   const seen = new Set();
-  const results = rankMediaResults([...(base.results || []), ...archiveItems, ...openMediaItems].filter((item) => {
+  const results = rankMediaResults([...(base.results || []), ...archiveItems, ...openMediaItems].map(normalizeMediaIdentity).filter((item) => {
     if (!item?.id || seen.has(item.id)) return false;
     seen.add(item.id);
     return true;
