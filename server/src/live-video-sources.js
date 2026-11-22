@@ -14,6 +14,16 @@ function publicUrl(value) {
   }
 }
 
+function sourceKind(value, url) {
+  const kind = String(value || '').toLowerCase();
+  if (kind === 'iframe' || kind === 'hls' || kind === 'file') return kind;
+  return /\.m3u8(?:$|\?)/i.test(url) ? 'hls' : 'file';
+}
+
+function slug(value) {
+  return text(value, 50).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'channel';
+}
+
 function sourceVerdict(source) {
   const url = publicUrl(source?.url);
   if (!url) return { status: 'invalid', reason: 'Source URL must be HTTP or HTTPS.' };
@@ -24,8 +34,17 @@ function sourceVerdict(source) {
 export function parseLiveChannelSources(raw = process.env.LIVE_CHANNEL_SOURCES_JSON || '[]') {
   let parsed;
   try { parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw; } catch { return []; }
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((channel) => ID.test(String(channel?.id || ''))).map((channel) => ({
+  const channels = Array.isArray(parsed) ? parsed : (() => {
+    const grouped = new Map();
+    for (const [group, feeds] of Object.entries(parsed || {})) for (const feed of Array.isArray(feeds) ? feeds : []) {
+      const id = slug(feed?.provider);
+      const channel = grouped.get(id) || { id, name: feed?.provider, sport: group === 'live-sport' ? 'Live sport' : 'Live news', region: feed?.cc, sources: [] };
+      channel.sources.push({ ...feed, authorized: feed?.authorized ?? /^broadcaster-/i.test(String(feed?.rights || '')) });
+      grouped.set(id, channel);
+    }
+    return [...grouped.values()];
+  })();
+  return channels.filter((channel) => ID.test(String(channel?.id || ''))).map((channel) => ({
     id: String(channel.id),
     name: text(channel.name || channel.id, 100),
     sport: text(channel.sport || 'Live sports', 80),
@@ -36,6 +55,7 @@ export function parseLiveChannelSources(raw = process.env.LIVE_CHANNEL_SOURCES_J
         id: text(source?.id || source?.label || 'source', 50),
         label: text(source?.label || 'Authorized source', 80),
         provider: text(source?.provider || '', 100) || null,
+        kind: sourceKind(source?.kind, publicUrl(source?.url)),
         rightsUrl: publicUrl(source?.rightsUrl) || null,
         url: publicUrl(source?.url),
         headers: source?.headers && typeof source.headers === 'object' ? source.headers : {},
@@ -49,10 +69,11 @@ export function parseLiveChannelSources(raw = process.env.LIVE_CHANNEL_SOURCES_J
 export function getLiveChannelPlayback(channels, id, mint) {
   const channel = (channels || []).find((item) => item.id === String(id));
   if (!channel) return { status: 'unavailable', id: String(id), sources: [], message: 'This channel is not configured.' };
-  const sources = channel.sources.filter((source) => source.status === 'configured' && source.url).map((source) => ({
+  const sources = channel.sources.filter((source) => source.status === 'configured' && source.url && source.kind !== 'iframe').map((source) => ({
     id: source.id,
     label: source.label,
     provider: source.provider,
+    kind: source.kind,
     rightsUrl: source.rightsUrl,
     stream: mint(source.url, source.headers),
   }));
