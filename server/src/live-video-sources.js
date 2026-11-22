@@ -1,5 +1,15 @@
 const HTTP = new Set(['http:', 'https:']);
 const ID = /^[a-z0-9][a-z0-9._-]{0,49}$/i;
+const DEFAULT_FEEDS = {
+  'live-news': [
+    { url: 'https://www.youtube.com/embed/live_stream?channel=UCQfwfsi5VrQ8yKZ-UWmAEFg', kind: 'iframe', provider: 'France 24', cc: 'FR', rights: 'broadcaster-embed' },
+    { url: 'https://static.france24.com/live/F24_EN_LO_HLS/live_web.m3u8', kind: 'hls', provider: 'France 24', cc: 'FR', rights: 'broadcaster-direct' },
+  ],
+  'live-sport': [
+    { url: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8', kind: 'hls', provider: 'Red Bull TV', cc: 'AT', rights: 'broadcaster-direct' },
+    { url: 'https://www.youtube.com/embed/live_stream?channel=UCZiTez1uFvyG3LYR4Ur2QDw', kind: 'iframe', provider: 'CazéTV', cc: 'BR', rights: 'broadcaster-embed' },
+  ],
+};
 
 function text(value, max = 240) {
   return String(value ?? '').trim().slice(0, max);
@@ -31,7 +41,7 @@ function sourceVerdict(source) {
   return { status: 'configured', reason: 'Authorized source configured; playback is available when the provider responds.' };
 }
 
-export function parseLiveChannelSources(raw = process.env.LIVE_CHANNEL_SOURCES_JSON || '[]') {
+export function parseLiveChannelSources(raw = process.env.LIVE_CHANNEL_SOURCES_JSON || DEFAULT_FEEDS) {
   let parsed;
   try { parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw; } catch { return []; }
   const channels = Array.isArray(parsed) ? parsed : (() => {

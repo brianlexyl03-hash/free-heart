@@ -54,3 +54,11 @@ test('groups supplied broadcaster feeds and keeps iframe embeds out of native pl
   assert.equal(playback.status, 'available');
   assert.deepEqual(playback.sources.map((x) => x.kind), ['hls']);
 });
+
+test('includes supplied direct HLS channels in the default catalog', () => {
+  const channels = parseLiveChannelSources();
+  const france = channels.find((x) => x.id === 'france-24');
+  const redBull = channels.find((x) => x.id === 'red-bull-tv');
+  assert.equal(france.sources.some((x) => x.kind === 'hls' && x.status === 'configured'), true);
+  assert.equal(redBull.sources.some((x) => x.kind === 'hls' && x.status === 'configured'), true);
+});

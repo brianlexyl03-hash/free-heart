@@ -237,7 +237,27 @@ function renderDates() {
 }
 function renderChannels() {
   const channels = CFG.channels || [];
-  root.querySelector('#lv-channels').innerHTML = channels.length ? `<div class="lv-channel-heading"><b>Official sports networks</b><span>Open the licensed service in your region</span></div><div class="lv-channel-row">${channels.map((c) => `<a class="lv-channel" href="${esc(c.url)}" target="_blank" rel="noreferrer"><span class="lv-channel-mark">${esc(c.name.split(/\s+/).map((x) => x[0]).join('').slice(0, 3))}</span><span><b>${esc(c.name)}</b><small>${esc(c.sport)}</small><em>${esc(c.region)}</em></span></a>`).join('')}</div>` : '';
+  root.querySelector('#lv-channels').innerHTML = channels.length ? `<div class="lv-channel-heading"><b>Official live channels</b><span>Play authorized direct feeds inside Free Heart</span></div><div class="lv-channel-row">${channels.map((c) => `<button class="lv-channel" data-channel-playback="${esc(c.id)}" aria-label="Play ${esc(c.name)} in Free Heart"><span class="lv-channel-mark">${esc(c.name.split(/\s+/).map((x) => x[0]).join('').slice(0, 3))}</span><span><b>${esc(c.name)}</b><small>${esc(c.sport)}</small><em>${esc(c.region)}</em></span></button>`).join('')}</div>` : '';
+}
+
+async function openChannelPlayback(id, label) {
+  let host = document.querySelector('.lv-channel-player');
+  if (!host) { host = document.createElement('div'); host.className = 'lv-channel-player'; document.body.appendChild(host); }
+  host.innerHTML = `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(label)} live player"><div class="lv-sheet-top"><b>${esc(label)} · Free Heart player</b><button class="ghost" data-channel-close>Close</button></div><p>Checking the authorized direct feed…</p></div>`;
+  try {
+    const data = await getJson(`/api/live/channels/${encodeURIComponent(id)}/playback`, 1);
+    if (data.status !== 'available' || !data.sources?.length) throw Object.assign(new Error(data.message || 'No authorized direct feed is configured.'), { status: 404 });
+    let active = 0;
+    const draw = () => {
+      const source = data.sources[active];
+      host.innerHTML = `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(label)} live player"><div class="lv-sheet-top"><b>${esc(label)} · Free Heart player</b><button class="ghost" data-channel-close>Close</button></div><video class="lv-live-video" src="${esc(source.stream)}" controls playsinline autoplay muted preload="metadata"></video><p class="lv-sheet-status">${esc(source.provider || source.label || label)} · ${esc(source.kind || 'direct feed')}</p><div class="lv-playback-sources">${data.sources.map((s, i) => `<button class="secondary ${i === active ? 'active' : ''}" data-channel-source="${i}">${esc(s.label)}</button>`).join('')}</div></div>`;
+    };
+    draw();
+    host.onclick = (event) => { if (event.target.closest('[data-channel-close]')) return host.remove(); const button = event.target.closest('[data-channel-source]'); if (button) { active = Number(button.dataset.channelSource) || 0; draw(); } };
+  } catch (error) {
+    host.innerHTML = `<div class="lv-sheet-card" role="dialog" aria-modal="true" aria-label="${esc(label)} live player"><div class="lv-sheet-top"><b>${esc(label)} · Free Heart player</b><button class="ghost" data-channel-close>Close</button></div><h3>Live video unavailable</h3><p>${esc(error.message || 'The authorized broadcaster feed is unavailable right now.')}</p></div>`;
+    host.onclick = (event) => { if (event.target.closest('[data-channel-close]')) host.remove(); };
+  }
 }
 
 function renderHero() {
@@ -406,6 +426,7 @@ function toast(msg, ms = 4200) {
 // ---------- events ----------
 function onClick(e) {
   const t = e.target;
+  const channel = t.closest('[data-channel-playback]'); if (channel) { openChannelPlayback(channel.dataset.channelPlayback, channel.querySelector('b')?.textContent || 'Official channel'); return; }
   const day = t.closest('[data-day]'); if (day) { S.dayKey = day.dataset.day; refresh(); renderAll(); return; }
   const flt = t.closest('[data-filter]'); if (flt) { S.filter = flt.dataset.filter; save(K.prefs, { filter: S.filter, league: S.league }); renderAll(); return; }
   const lg = t.closest('[data-league]'); if (lg) { S.league = lg.dataset.league; save(K.prefs, { filter: S.filter, league: S.league }); renderAll(); return; }
