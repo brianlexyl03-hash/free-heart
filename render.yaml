@@ -12,6 +12,8 @@ services:
         value: 0.0.0.0
       - key: CORE_BIND
         value: 127.0.0.1:7070
+      - key: PUBLIC_SITE_URL
+        value: https://free-heart.de.deplexo.com
       - key: LOG_LEVEL
         value: info
       - key: UPSTREAM_COMMIT
